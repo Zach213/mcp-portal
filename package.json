@@ -1,0 +1,18 @@
+{
+  "name": "mcp-portal",
+  "version": "1.0.0",
+  "description": "Hosted MCP server for Portal — creates Portals from Cursor, Claude Code, and other MCP clients",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "express": "^4.21.0",
+    "zod": "^3.24.0"
+  },
+  "private": true
+}

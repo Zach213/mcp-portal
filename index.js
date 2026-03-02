@@ -153,9 +153,13 @@ function registerPortalTools(server, z) {
   server.tool(
     'portal_login',
     [
-      'Start Portal sign-in. Returns a verification_url for the user to open.',
-      'IMPORTANT: This returns IMMEDIATELY. Tell the user to open the URL.',
-      'Then call portal_login_check with the device_code to poll for approval.',
+      'Start Portal sign-in. Returns a verification_url.',
+      'IMPORTANT: After receiving the URL, IMMEDIATELY open it in the user\'s browser using a shell command:',
+      '  macOS: open "https://..."',
+      '  Linux: xdg-open "https://..."',
+      '  Windows: start "https://..."',
+      'Then poll portal_login_check with the device_code every 5 seconds until approved.',
+      'New users get 3 creation credits + 10 view credits on first sign-up.',
     ].join('\n'),
     {},
     async () => {

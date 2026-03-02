@@ -116,6 +116,134 @@ function registerTools(server, z, bearerToken) {
     { portal_id: z.string() },
     async ({ portal_id }) => apiCall('GET', `/v1/portals/${encodeURIComponent(portal_id)}`, undefined, bearerToken)
   );
+
+  // ── MCP v1 Primitives: saveLogin, recordDemo, createScript ──
+
+  server.tool(
+    'save_login',
+    [
+      'Start a login capture session. Opens a sandboxed browser at the given URL.',
+      'Returns a hosted_url that the user opens in their browser to log in.',
+      'After login, call save_login_complete with the session_id to save the state.',
+      '',
+      'Flow: save_login → user opens hosted_url → logs in → save_login_complete',
+    ].join('\n'),
+    {
+      url: z.string().describe('The URL to navigate to for login'),
+      name: z.string().optional().describe('Label for this saved login'),
+    },
+    async ({ url, name }) => apiCall('POST', '/v1/sessions/login', { url, name }, bearerToken)
+  );
+
+  server.tool(
+    'save_login_complete',
+    'Save the login state after the user has logged in via the hosted UI. Call after user finishes at the hosted_url.',
+    { session_id: z.string() },
+    async ({ session_id }) => apiCall('POST', `/v1/sessions/${encodeURIComponent(session_id)}/save`, {}, bearerToken)
+  );
+
+  server.tool(
+    'record_demo',
+    [
+      'Start a demo recording session. Opens a sandboxed browser at the given URL.',
+      'Returns a hosted_url where the user clicks around and talks to record a demo.',
+      'After recording, call stop_recording with the session_id to compile.',
+      '',
+      'Flow: record_demo → user opens hosted_url → records → stop_recording',
+    ].join('\n'),
+    {
+      url: z.string().describe('The URL to record a demo on'),
+      saved_state_id: z.string().optional().describe('ID of a saved login to pre-authenticate'),
+      name: z.string().optional().describe('Label for this recording'),
+    },
+    async ({ url, saved_state_id, name }) => apiCall('POST', '/v1/sessions/record', { url, saved_state_id, name }, bearerToken)
+  );
+
+  server.tool(
+    'start_recording',
+    'Begin the actual recording after user is ready at the hosted UI.',
+    { session_id: z.string() },
+    async ({ session_id }) => apiCall('POST', `/v1/sessions/${encodeURIComponent(session_id)}/start-recording`, {}, bearerToken)
+  );
+
+  server.tool(
+    'stop_recording',
+    'Stop recording and compile the demo into a structured script.',
+    { session_id: z.string() },
+    async ({ session_id }) => apiCall('POST', `/v1/sessions/${encodeURIComponent(session_id)}/stop`, {}, bearerToken)
+  );
+
+  server.tool(
+    'get_session',
+    'Poll the status of a login or recording session.',
+    { session_id: z.string() },
+    async ({ session_id }) => apiCall('GET', `/v1/sessions/${encodeURIComponent(session_id)}`, undefined, bearerToken)
+  );
+
+  server.tool(
+    'create_script',
+    [
+      'Generate a demo script by headless exploration (experimental).',
+      'Navigates the site autonomously using an LLM agent, captures selectors and page structure,',
+      'then compiles into a reusable script with scenes, pages, and tools.',
+      '',
+      'Returns immediately with script_id. Poll get_script for results.',
+    ].join('\n'),
+    {
+      url: z.string().describe('URL to explore'),
+      saved_state_id: z.string().optional().describe('Saved login for pre-authentication'),
+      credential_id: z.string().optional().describe('Credential vault entry for auto-login'),
+      goals: z.array(z.string()).optional().describe('Exploration goals (e.g. "find the analytics dashboard")'),
+      max_pages: z.number().optional().describe('Max pages to visit (default 5)'),
+    },
+    async ({ url, saved_state_id, credential_id, goals, max_pages }) =>
+      apiCall('POST', '/v1/scripts/generate', { url, saved_state_id, credential_id, goals, max_pages }, bearerToken)
+  );
+
+  server.tool(
+    'get_script',
+    'Poll the status of a headless script generation.',
+    { script_id: z.string() },
+    async ({ script_id }) => apiCall('GET', `/v1/scripts/${encodeURIComponent(script_id)}`, undefined, bearerToken)
+  );
+
+  // ── Credential Vault ──
+
+  server.tool(
+    'create_credential',
+    [
+      'Create a credential vault entry for automated login.',
+      'Credentials are encrypted at rest and never returned via API.',
+      'Use with save_login or create_script for pre-authenticated sessions.',
+    ].join('\n'),
+    {
+      name: z.string().describe('Label for this credential'),
+      domain: z.string().describe('Domain this credential is for (e.g. "github.com")'),
+      values: z.object({
+        username: z.string().optional(),
+        email: z.string().optional(),
+        password: z.string().optional(),
+      }).passthrough().describe('Login field values'),
+      totp_secret: z.string().optional().describe('TOTP authenticator secret for 2FA'),
+      sso_provider: z.string().optional().describe('SSO provider (google, github, microsoft)'),
+    },
+    async ({ name, domain, values, totp_secret, sso_provider }) =>
+      apiCall('POST', '/v1/credentials', { name, domain, values, totp_secret, sso_provider }, bearerToken)
+  );
+
+  server.tool(
+    'list_credentials',
+    'List all credential vault entries (metadata only, no secrets).',
+    {},
+    async () => apiCall('GET', '/v1/credentials', undefined, bearerToken)
+  );
+
+  server.tool(
+    'delete_credential',
+    'Delete a credential vault entry.',
+    { credential_id: z.string() },
+    async ({ credential_id }) => apiCall('DELETE', `/v1/credentials/${encodeURIComponent(credential_id)}`, undefined, bearerToken)
+  );
 }
 
 const app = express();

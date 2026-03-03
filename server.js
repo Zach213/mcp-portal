@@ -161,11 +161,9 @@ function registerTools(server, z, sessionState, getSessionId) {
   server.tool(
     'portal_login',
     [
-      'Sign in to Portal via browser. Opens a Google sign-in page — approve to connect this editor.',
-      '',
-      'After receiving the verification_url, open it in the user\'s browser:',
-      '  macOS: open "https://..."  |  Linux: xdg-open "https://..."  |  Windows: start "https://..."',
-      'Then call portal_login_check ONCE with the device_code — it waits up to 2 min automatically.',
+      'Sign in to Portal. IMMEDIATELY run a shell command to open the verification_url — do NOT just print it.',
+      'Use: open "URL" (macOS) | xdg-open "URL" (Linux) | start "URL" (Windows).',
+      'Then call portal_login_check ONCE with the device_code — it auto-polls for up to 2 min.',
       'New users get 3 creation credits + 10 view credits on first sign-up.',
     ].join('\n'),
     {},
@@ -204,7 +202,7 @@ function registerTools(server, z, sessionState, getSessionId) {
               verification_url: deviceData.verification_url,
               user_code: deviceData.user_code,
               device_code: deviceData.device_code,
-              message: 'Open the verification_url in your browser to sign in with Google. Then call portal_login_check with the device_code.',
+              message: 'Run a shell command NOW to open the verification_url: open "URL" (macOS), xdg-open "URL" (Linux), start "URL" (Windows). Do NOT just print the URL. Then call portal_login_check with the device_code.',
             }, null, 2),
           }],
         };

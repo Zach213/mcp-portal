@@ -729,12 +729,12 @@ function registerTools(server, z, sessionState, getSessionId) {
     'buy_credits',
     [
       'Purchase Portal creation credits. Opens a Stripe checkout page.',
-      'Each credit = one Portal creation ($0.45/credit).',
+      'Each credit = one Portal creation ($0.40/credit).',
       '',
       'Packs:',
-      '  starter — 10 credits for $4.50',
-      '  builder — 50 credits for $22.50',
-      '  pro     — 100 credits for $45.00',
+      '  starter — 10 credits for $4',
+      '  builder — 50 credits for $20',
+      '  pro     — 100 credits for $40',
       '',
       'Returns a checkout_url. Open it in the user\'s browser immediately:',
       '  macOS: open "https://..."',
@@ -743,7 +743,7 @@ function registerTools(server, z, sessionState, getSessionId) {
       'After payment, credits are added automatically. Call portal_status to verify.',
     ].join('\n'),
     {
-      pack_id: z.enum(['starter', 'builder', 'pro']).describe('Credit pack: starter (10/$4.50), builder (50/$22.50), pro (100/$45)'),
+      pack_id: z.enum(['starter', 'builder', 'pro']).describe('Credit pack: starter (10/$4), builder (50/$20), pro (100/$40)'),
     },
     async ({ pack_id }) => {
       const key = getKey();

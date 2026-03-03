@@ -301,32 +301,31 @@ function registerPortalTools(server, z) {
       'Portal creates interactive sandboxed browser sessions ("Portals") for any website.',
       'A Portal is a shareable link that opens a live, clickable browser session.',
       '',
-      'STREAMLINED FLOW — minimize tool calls:',
-      '  1. portal_status (this tool) — check auth',
-      '  2. portal_login → portal_login_check (only if not authenticated)',
-      '  3. make_portal — validates AND creates in one call. Do NOT call validate_ptl separately.',
+      'DECISION TREE — two questions:',
+      '',
+      '  Q1: Does the site need sign-in?',
+      '    YES → save_login → user logs in, presses Save → poll get_session → saved_state_id',
+      '          (Hosted UI prompts user to store credentials for auto re-login — handled in browser)',
+      '    NO → skip to Q2',
+      '',
+      '  Q2: Record yourself or let AI generate?',
+      '    RECORD → record_demo → user clicks around, presses Stop → poll get_session → compiled scenes',
+      '    AI GENERATE → create_script → poll get_script → draft scenes',
+      '',
+      '  Then REVIEW the draft with the user:',
+      '    1. Watch mode (guided demo) or play mode (free browse)?',
+      '    2. Scenes (narration + actions)',
+      '    3. Example Q&A (verify AI answers)',
+      '    4. Blocked selectors + allowed URLs',
+      '    5. Greeting + knowledge',
+      '    6. Final confirmation → make_portal',
       '',
       'After checking status:',
-      '- Not authenticated → call portal_login (it opens browser automatically), then poll portal_login_check.',
-      '- Authenticated → go straight to make_portal. Skip validate_ptl.',
-      '',
-      'Two portal modes:',
-      '  play — User explores freely. No script needed. Go straight to make_portal.',
-      '  watch — Agent-led demo with scenes. Write the scenes, show them to the user in readable format,',
-      '          wait for approval, THEN call make_portal.',
-      '',
-      'FOR WATCH MODE — you MUST present scenes before creating:',
-      '  Write scenes based on user request. Show each scene as:',
-      '    Scene 1: [title]',
-      '      "[narration text]"',
-      '      Actions: scroll down, wait 1s',
-      '  Then ask: "Does this look good, or want to change anything?"',
-      '  Only call make_portal after the user says yes or edits.',
+      '- Not authenticated → call portal_login, then poll portal_login_check.',
+      '- Authenticated → determine user intent and follow Q1/Q2 above.',
       '',
       'Other tools:',
-      '  "Generate a demo for [URL]" → create_script → review draft → make_portal (mode: watch).',
-      '  "Save my login for [site]" → save_login → save_login_complete.',
-      '  "Record a demo" → record_demo → stop_recording.',
+      '  "Show my portals" → list_portals — check for existing portals before creating duplicates.',
       '  "Store credentials" → create_credential.',
       '',
       'New users get 3 creation credits + 10 view credits on sign-up.',
@@ -389,6 +388,7 @@ function registerPortalTools(server, z) {
       '  - When ready, open the URL in the user\'s browser automatically.',
       '',
       'FOR WATCH MODE:',
+      '  Prefer using create_script to auto-generate scenes (better quality than writing them yourself).',
       '  You MUST have shown the scenes to the user and gotten approval BEFORE calling this.',
       '  If you haven\'t shown scenes yet, do that first. Do NOT call this tool with watch mode',
       '  scenes the user hasn\'t reviewed.',
@@ -444,13 +444,33 @@ function registerPortalTools(server, z) {
   );
 
   server.tool(
+    'list_portals',
+    [
+      'List the user\'s recent portals (up to 20, newest first).',
+      '',
+      'Use this to check if a portal already exists for the same URL before creating a new one.',
+      'Also useful for the user to re-open or share a previous portal.',
+    ].join('\n'),
+    {},
+    async () => {
+      const key = getApiKey();
+      if (!key) return authError();
+      return apiCall('GET', '/v1/portals', undefined, key);
+    }
+  );
+
+  server.tool(
     'save_login',
     [
       'Start a login capture session. Opens a sandboxed browser at the given URL.',
-      'Returns a hosted_url that the user opens in their browser to log in.',
-      'After login, call save_login_complete with the session_id to save the state.',
+      'Returns a hosted_url + session_id.',
       '',
-      'Flow: save_login → user opens hosted_url → logs in → save_login_complete',
+      'Tell the user to open the hosted_url in their browser and log in normally.',
+      'The user presses the Save button in the hosted UI when done — do NOT wait for them to tell you verbally.',
+      'Instead, poll get_session with the session_id every 5 seconds.',
+      'When status changes to "ready", the login state is saved and the response includes saved_state_id.',
+      '',
+      'Flow: save_login → user opens hosted_url → logs in → presses Save → poll get_session → saved_state_id',
     ].join('\n'),
     {
       url: z.string().describe('The URL to navigate to for login'),
@@ -465,7 +485,15 @@ function registerPortalTools(server, z) {
 
   server.tool(
     'save_login_complete',
-    'Save the login state after the user has logged in via the hosted UI.',
+    [
+      'Save the login state after the user has logged in via the hosted UI.',
+      '',
+      'After save completes, the hosted UI shows a "Keep this Portal logged in?" prompt',
+      'where the user can optionally store credentials for auto re-login.',
+      'This is handled entirely in the hosted UI — do NOT ask about credentials yourself.',
+      '',
+      'The response includes saved_state_id which you carry forward to record_demo or create_script.',
+    ].join('\n'),
     { session_id: z.string() },
     async ({ session_id }) => {
       const key = getApiKey();
@@ -478,13 +506,22 @@ function registerPortalTools(server, z) {
     'record_demo',
     [
       'Start a demo recording session — the user clicks around in a hosted browser while the system records.',
-      'This is the most accurate way to generate a script because the user shows exactly what they want.',
+      'Most accurate way to generate a script because the user shows exactly what they want.',
       '',
-      'Returns a hosted_url. Tell the user to open it, click through the demo they want, then tell you when done.',
-      'After recording, call stop_recording with the session_id to compile into structured scenes.',
-      'The compiled scenes can then be used in make_portal with mode "watch".',
+      'Returns a hosted_url + session_id.',
+      'Tell the user to open the hosted_url, click through the demo they want, then press the Stop button in the hosted UI.',
+      'Do NOT wait for the user to tell you verbally. Instead, poll get_session every 5 seconds.',
+      'When status changes to "compiled", the recording is done and compiled scenes are in the response.',
       '',
-      'Flow: record_demo → user opens hosted_url → clicks around → stop_recording → draft scenes',
+      'After compilation, present the FULL review to the user:',
+      '  1. Watch mode or play mode?',
+      '  2. Formatted scenes (narration + actions)',
+      '  3. Example Q&A (verify AI answers are accurate)',
+      '  4. Blocked selectors + allowed URLs',
+      '  5. Greeting + knowledge',
+      'Then call make_portal after user approves.',
+      '',
+      'Flow: record_demo → user opens hosted_url → clicks around → presses Stop → poll get_session → review → make_portal',
     ].join('\n'),
     {
       url: z.string().describe('The URL to record a demo on'),
@@ -511,7 +548,13 @@ function registerPortalTools(server, z) {
 
   server.tool(
     'stop_recording',
-    'Stop recording and compile the demo into a structured script.',
+    [
+      'Stop recording and compile the demo into structured scenes.',
+      'Returns compiled scenes with narration, actions, selectors, and Q&A.',
+      'Present the FULL review to the user (same as get_script review checklist):',
+      '  mode choice, scenes, example Q&A, selectors, greeting, knowledge.',
+      'Then call make_portal after user approves.',
+    ].join('\n'),
     { session_id: z.string() },
     async ({ session_id }) => {
       const key = getApiKey();
@@ -522,7 +565,24 @@ function registerPortalTools(server, z) {
 
   server.tool(
     'get_session',
-    'Poll the status of a login or recording session.',
+    [
+      'Poll the status of a login or recording session.',
+      '',
+      'Login session statuses:',
+      '  "awaiting_login" → user has not saved yet, keep polling',
+      '  "saving" → save in progress',
+      '  "ready" → login saved, saved_state_id is in the response',
+      '  "save_failed" → save failed, tell user to try again',
+      '',
+      'Recording session statuses:',
+      '  "awaiting_recording" → user has not started yet',
+      '  "recording" → user is clicking around',
+      '  "compiling" → stop was pressed, scenes being compiled',
+      '  "compiled" → done, compiled scenes are in the response as "script"',
+      '  "compile_failed" → compilation failed',
+      '',
+      'Poll every 5 seconds. The user presses buttons in the hosted UI to trigger transitions.',
+    ].join('\n'),
     { session_id: z.string() },
     async ({ session_id }) => {
       const key = getApiKey();
@@ -540,10 +600,12 @@ function registerPortalTools(server, z) {
       '  - Public URL (no saved_state_id): Fast (~10s). Fetches page content and generates scenes via LLM.',
       '  - With saved_state_id: Experimental (~60-120s). Opens headless browser with saved login, explores interactively.',
       '',
-      'Returns script_id. Poll get_script until status is "draft".',
-      'Draft scenes are for REVIEW — present them to the user and ask if they want to edit before creating a portal.',
+      'Returns script_id. Poll get_script every 5-15s until status is "draft".',
       '',
-      'After the user approves scenes, use them in make_portal with mode "watch".',
+      'The draft includes scenes, example_qa, blocked_selectors, allowed_urls, greeting, and knowledge.',
+      'Present ALL of these to the user for review (see get_script for the full review checklist).',
+      'The user picks watch mode (guided demo) or play mode (free browse) during review.',
+      'After approval, call make_portal.',
     ].join('\n'),
     {
       url: z.string().describe('URL to generate a script for'),
@@ -565,9 +627,30 @@ function registerPortalTools(server, z) {
       'Poll script generation status. Returns status_message with progress updates.',
       '',
       'Statuses: "generating" (in progress), "draft" (ready for review), "failed" (error).',
-      'When status is "draft", present the scenes to the user for review/editing.',
-      'Show each scene: name, script (narration), and actions.',
-      'Ask: "Want to edit any scenes before creating the portal?"',
+      '',
+      'When status is "draft", present a COMPLETE review to the user before creating the portal:',
+      '',
+      '1. MODE SELECTION: Ask "Should this be a guided demo (watch mode) or free-browse (play mode)?"',
+      '   Watch = agent leads with scenes. Play = viewer explores freely with AI copilot.',
+      '',
+      '2. SCENES (watch mode): Show each scene formatted clearly:',
+      '   Scene 1: [name]',
+      '     "[narration text]"',
+      '     Actions: scroll down, click "Pricing", wait 2s',
+      '   Ask: "Want to edit, reorder, or remove any scenes?"',
+      '',
+      '3. EXAMPLE Q&A: If example_qa is present, show each Q&A pair:',
+      '   Q: "What does this product do?" → A: "..." (source: page_content)',
+      '   Ask: "Are these answers accurate? Anything the AI should answer differently?"',
+      '',
+      '4. SELECTORS: Show blocked_selectors and allowed_urls:',
+      '   Blocked: a[href="/login"] (auth flow), .cookie-banner (consent)',
+      '   Allowed: example.com/*, example.com/pricing',
+      '   Ask: "Should anything else be blocked or allowed?"',
+      '',
+      '5. GREETING + KNOWLEDGE: Show the AI greeting and knowledge summary.',
+      '',
+      '6. CONFIRM: "Ready to create the portal? This uses 1 credit."',
     ].join('\n'),
     { script_id: z.string() },
     async ({ script_id }) => {
@@ -621,6 +704,33 @@ function registerPortalTools(server, z) {
       const key = getApiKey();
       if (!key) return authError();
       return apiCall('DELETE', `/v1/credentials/${encodeURIComponent(credential_id)}`, undefined, key);
+    }
+  );
+
+  server.tool(
+    'buy_credits',
+    [
+      'Purchase Portal creation credits. Opens a Stripe checkout page.',
+      'Each credit = one Portal creation ($0.45/credit).',
+      '',
+      'Packs:',
+      '  starter — 10 credits for $4.50',
+      '  builder — 50 credits for $22.50',
+      '  pro     — 100 credits for $45.00',
+      '',
+      'Returns a checkout_url. Open it in the user\'s browser immediately:',
+      '  macOS: open "https://..."',
+      '  Linux: xdg-open "https://..."',
+      '',
+      'After payment, credits are added automatically. Call portal_status to verify.',
+    ].join('\n'),
+    {
+      pack_id: z.enum(['starter', 'builder', 'pro']).describe('Credit pack: starter (10/$4.50), builder (50/$22.50), pro (100/$45)'),
+    },
+    async ({ pack_id }) => {
+      const key = getApiKey();
+      if (!key) return authError();
+      return apiCall('POST', '/v1/auth/credits/checkout', { pack_id }, key);
     }
   );
 }

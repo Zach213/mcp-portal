@@ -1,18 +1,42 @@
 {
-  "name": "mcp-portal",
+  "name": "@makeportals/mcp",
   "version": "1.0.0",
-  "description": "Hosted MCP server for Portal — creates Portals from Cursor, Claude Code, and other MCP clients",
-  "main": "server.js",
+  "description": "Portal MCP server — create Portals from Cursor, Claude Code, Codex, and any MCP client",
+  "main": "index.js",
+  "bin": {
+    "makeportals-mcp": "./index.js"
+  },
   "scripts": {
-    "start": "node server.js"
+    "start": "node index.js",
+    "start:hosted": "node server.js"
   },
   "engines": {
     "node": ">=18.0.0"
   },
+  "keywords": [
+    "mcp",
+    "portal",
+    "makeportals",
+    "cursor",
+    "claude-code",
+    "codex",
+    "demo",
+    "browser-automation"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/makeportals/mcp"
+  },
+  "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
     "express": "^4.21.0",
     "zod": "^3.24.0"
   },
-  "private": true
+  "files": [
+    "index.js",
+    "server.js",
+    "package.json",
+    "README.md"
+  ]
 }

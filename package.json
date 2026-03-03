@@ -7,8 +7,8 @@
     "makeportals-mcp": "./index.js"
   },
   "scripts": {
-    "start": "node index.js",
-    "start:hosted": "node server.js"
+    "start": "node server.js",
+    "start:local": "node index.js"
   },
   "engines": {
     "node": ">=18.0.0"

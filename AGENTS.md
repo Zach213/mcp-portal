@@ -7,37 +7,34 @@ You have access to the Portal MCP server, which lets you create interactive brow
 When a user first asks you to do something with Portal:
 
 1. Call `portal_status` to check authentication
-2. If not authenticated, call `portal_login` to start sign-in, then open the `verification_url` in the user's browser
-3. Poll `portal_login_check` with the `device_code` every 5 seconds until approved
-4. Once authenticated, proceed to determine their intent
+2. If not authenticated, call `portal_login` to start sign-in
+3. **IMMEDIATELY open the `verification_url`** via shell command (`open "URL"` on macOS, `xdg-open "URL"` on Linux, `start "URL"` on Windows) — do NOT just print it
+4. Call `portal_login_check` ONCE with the `device_code` — it auto-polls for up to 2 minutes
+5. Once authenticated, proceed to determine their intent
 
 ## Decision Tree
 
-When the user says something like "Make me a portal for X", answer **two questions** in order:
+When the user says something like "Make me a portal for X":
 
-### Question 1: Does the site need sign-in?
+### Auth check: Does the site need sign-in?
 
-| Signal | Answer |
-|---|---|
-| Public site (landing page, docs, marketing) | **No** — skip straight to Question 2 |
-| Dashboard, admin panel, SaaS app, anything behind auth | **Yes** — save their login first |
+If the URL is likely behind authentication (dashboards, admin panels, settings pages,
+anything that isn't the public homepage), call `save_login` directly. The user will
+approve or deny via the tool confirmation dialog — don't ask a separate question.
 
-**If YES — save login first:**
+**If save_login is approved:**
 
-1. Call `save_login` with the URL → returns `hosted_url` + `session_id`
-2. Tell the user: **"Open this link and log in normally. Press the save button in the hosted UI when done."**
-3. Poll `get_session` every 5 seconds — when status changes to `ready`, login is saved
-4. The response includes `saved_state_id` — this carries forward to Question 2
-5. The hosted UI automatically prompts the user: "Keep this Portal logged in?" with a credential form (username, password, optional TOTP). This is handled entirely in the browser — do NOT ask about credentials yourself.
-6. Now proceed to Question 2
+1. The response includes a `hosted_url` — **auto-open it** via shell command
+2. Tell the user: **"Log in normally, then press Save when done."**
+3. Poll `get_session` every 10 seconds until status is `ready`
+4. The response includes `saved_state_id` — this carries forward
 
-### Question 2: How should the demo content be created?
+### How should the demo be created?
 
-Two options. If the user doesn't specify, ask:
+Ask: **"Want to record it yourself, or should I generate the demo?"**
 
-> **"Would you like to record the demo yourself, or let AI generate it?"**
-> 1. **Record it myself** — you click around in a live browser while we capture your actions
-> 2. **Let AI generate it** — AI explores the site and builds a guided tour automatically
+1. **Record it myself** — user clicks around in a live browser while we capture actions
+2. **Let AI generate it** — AI explores the site and builds a guided tour automatically
 
 ---
 
@@ -47,17 +44,19 @@ The user clicks around in a hosted browser while the system records their action
 
 **Public site (no saved_state_id):**
 
-1. Call `record_demo` with `url`
-2. Tell the user: **"Open this link to start recording. Click through the demo you want to show. Press the stop button in the hosted UI when done."**
-3. Poll `get_session` every 5 seconds — when status changes to `compiled`, the recording is done
-4. Present the review (see **Reviewing the Draft** below)
-5. After user approves, call `make_portal`
+1. Call `record_demo` with `url` → response includes `hosted_url`
+2. **Auto-open the `hosted_url`** via shell command
+3. Tell the user: **"Click through the demo you want to show. Press stop when done."**
+4. Poll `get_session` every 10 seconds — when status changes to `compiled`, the recording is done
+5. Present the review (see **Reviewing the Draft** below)
+6. After user approves, call `make_portal`
 
-**Authenticated site (has saved_state_id from Question 1):**
+**Authenticated site (has saved_state_id):**
 
-1. Call `record_demo` with `url` AND `saved_state_id` — the hosted browser opens **already logged in**
-2. Tell the user: **"Open this link — you're already signed in. Click through the demo, then press stop when done."**
-3. Same steps 3-5 as above
+1. Call `record_demo` with `url` AND `saved_state_id` — browser opens already logged in
+2. **Auto-open the `hosted_url`** via shell command
+3. Tell the user: **"You're already signed in. Click through the demo, then press stop."**
+4. Same polling + review flow as above
 
 ## Option B: AI Auto-Generates the Demo
 
@@ -67,7 +66,7 @@ AI explores the site (via LLM for public URLs, via headless VM for authenticated
 
 1. Call `create_script` with `url` and `goals` (e.g. `["Show pricing", "Highlight key features"]`)
 2. Tell the user: **"Generating a demo script — about 10 seconds."**
-3. Poll `get_script` every 5 seconds until status is `draft`
+3. Poll `get_script` every 10 seconds until status is `draft`
 4. Present the review (see **Reviewing the Draft** below)
 5. After user approves, call `make_portal`
 
@@ -220,6 +219,7 @@ The Portal spec (`.ptl`) is the configuration object. Key fields:
 | `make_portal` | Yes | Create a portal (validates internally — skip `validate_ptl`) |
 | `get_portal` | Yes | Poll portal provisioning status |
 | `list_portals` | Yes | List recent portals |
+| `get_portal_sessions` | Yes | Get session replays: conversation logs + signed recording URLs (10 min) |
 | **Login Capture** | | |
 | `save_login` | Yes | Start login capture session → `hosted_url` |
 | `save_login_complete` | Yes | Save captured login → `saved_state_id` |
@@ -235,6 +235,8 @@ The Portal spec (`.ptl`) is the configuration object. Key fields:
 | `create_credential` | Yes | Store encrypted login credentials |
 | `list_credentials` | Yes | List vault entries (metadata only) |
 | `delete_credential` | Yes | Delete a credential |
+| **Billing** | | |
+| `buy_credits` | Yes | Create Stripe Checkout session for credit purchase |
 | **Spec Utilities** | | |
 | `normalize_ptl` | Yes | Normalize a spec to canonical form |
 | `validate_ptl` | Yes | Validate a spec (not needed before `make_portal`) |

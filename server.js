@@ -319,20 +319,16 @@ function registerTools(server, z, sessionState, getSessionId) {
       '',
       'Portal creates shareable links to live, sandboxed browser sessions for any website.',
       '',
-      'AFTER AUTH, ALWAYS ASK THE USER THESE TWO QUESTIONS before doing anything else:',
+      'AFTER AUTH, ask: "Want to record it yourself, or should I generate the demo?"',
+      '  Record → record_demo. Generate → create_script. Quick one-shot → make_portal.',
       '',
-      '  Q1: "Does [site] need you to be logged in to show this?"',
-      '       If showing a dashboard, admin panel, feature behind auth, or anything',
-      '       that isn\'t the public homepage → YES → save_login first.',
-      '       If the user mentions a specific feature (e.g. "embed feature", "settings",',
-      '       "dashboard"), it likely needs sign-in. ASK, don\'t assume public.',
+      'If the site likely needs login (dashboards, admin panels, settings, features behind auth),',
+      'call save_login directly — the user will approve or deny via the tool confirmation dialog.',
+      'Don\'t ask a separate question; let the tool dialog be the yes/no.',
       '',
-      '  Q2: "Want to record it yourself, or should I generate the demo?"',
-      '       Record → record_demo. Generate → create_script. Quick one-shot → make_portal.',
-      '',
-      'FLOW after questions:',
-      '  1. save_login if needed → user logs in via hosted browser',
-      '  2. create_script or record_demo → get draft with scenes, Q&A, selectors',
+      'FLOW:',
+      '  1. save_login if site needs auth → user approves/denies via tool dialog',
+      '  2. create_script or record_demo → draft with scenes, Q&A, selectors',
       '  3. SHOW THE FULL REVIEW to user (scenes + Q&A + selectors) — never skip this',
       '  4. make_portal → shareable link (1 credit)',
       '',
@@ -721,12 +717,27 @@ app.post('/mcp', async (req, res) => {
       return;
     }
 
-    // Try restoring a persisted session (survives server restarts)
+    // Stale or unknown session — every new transport requires 'initialize' first.
+    // If the request isn't initialize, return 404 so the client reconnects.
+    const body = Array.isArray(req.body) ? req.body : [req.body];
+    const isInitialize = body.some(msg => msg?.method === 'initialize');
+
+    if (existingSessionId && !isInitialize) {
+      console.log(`[Session] Stale session ${existingSessionId.slice(0, 8)}… — forcing re-init`);
+      res.status(404).json({
+        jsonrpc: '2.0',
+        error: { code: -32000, message: 'Session expired. Please reconnect.' },
+        id: req.body?.id || null,
+      });
+      return;
+    }
+
+    // Try restoring persisted state (API key + email survive server restarts)
     let restoredState = null;
     if (existingSessionId) {
       restoredState = await restoreSession(existingSessionId);
       if (restoredState) {
-        console.log(`[Session] Restored persisted session for ${restoredState.email || 'unknown'}`);
+        console.log(`[Session] Restored auth for ${restoredState.email || 'unknown'}`);
       }
     }
 
@@ -737,7 +748,7 @@ app.post('/mcp', async (req, res) => {
       apiKey: restoredState?.api_key || bearerToken,
       email: restoredState?.email || null,
     };
-    let capturedSessionId = existingSessionId || null;
+    let capturedSessionId = null;
     const getSessionId = () => capturedSessionId;
     const server = new McpServer({ name: 'portal-mcp', version: '1.0.0' });
     registerTools(server, z, sessionState, getSessionId);

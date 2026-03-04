@@ -14,157 +14,128 @@ When a user first asks you to do something with Portal:
 
 ## Decision Tree
 
-When the user says something like "Make me a portal for X":
+When the user says "Make me a portal for X", follow this flow in order:
 
-### Auth check: Does the site need sign-in?
+### Node A: Entry Type Classification
 
-If the URL is likely behind authentication (dashboards, admin panels, settings pages,
-anything that isn't the public homepage), call `save_login` directly. The user will
-approve or deny via the tool confirmation dialog — don't ask a separate question.
+Decide internally — four possibilities:
 
-**If save_login is approved:**
+| Signal | Classification |
+|---|---|
+| Public marketing page, docs, landing page | **PUBLIC** |
+| Dashboard, admin panel, SaaS app, settings, internal tool | **NEEDS AUTH** |
+| User mentions local path, localhost, "my app" | **LOCAL FILE** |
+| Ambiguous | **NOT SURE → ask** |
 
-1. The response includes a `hosted_url` — **auto-open it** via shell command
-2. Tell the user: **"Log in normally, then press Save when done."**
-3. Poll `get_session` every 10 seconds until status is `ready`
-4. The response includes `saved_state_id` — this carries forward
+**Err on NOT SURE if unclear.** Ask: "Does [site] require you to be logged in?"
 
-### How should the demo be created?
+**If NEEDS AUTH:**
+1. Call `save_login` — user approves/denies via tool confirmation dialog
+2. Auto-open the `hosted_url` via shell command
+3. Tell user: **"Log in normally, then press Save when done."**
+4. Poll `get_session` every 10s until `saved_state_id` is returned
+5. Continue to Node B with `saved_state_id`
 
-Ask: **"Want to record it yourself, or should I generate the demo?"**
+**If PUBLIC or LOCAL FILE:** Continue to Node B directly.
 
-1. **Record it myself** — user clicks around in a live browser while we capture actions
-2. **Let AI generate it** — AI explores the site and builds a guided tour automatically
+### Node B: Mode Selection
 
----
+Ask: **"Play mode (you click around, AI answers questions) or Watch mode (AI leads a guided demo)?"**
 
-## Option A: User Records the Demo
-
-The user clicks around in a hosted browser while the system records their actions into structured scenes. Most accurate — the user shows exactly what they want.
-
-**Public site (no saved_state_id):**
-
-1. Call `record_demo` with `url` → response includes `hosted_url`
-2. **Auto-open the `hosted_url`** via shell command
-3. Tell the user: **"Click through the demo you want to show. Press stop when done."**
-4. Poll `get_session` every 10 seconds — when status changes to `compiled`, the recording is done
-5. Present the review (see **Reviewing the Draft** below)
-6. After user approves, call `make_portal`
-
-**Authenticated site (has saved_state_id):**
-
-1. Call `record_demo` with `url` AND `saved_state_id` — browser opens already logged in
-2. **Auto-open the `hosted_url`** via shell command
-3. Tell the user: **"You're already signed in. Click through the demo, then press stop."**
-4. Same polling + review flow as above
-
-## Option B: AI Auto-Generates the Demo
-
-AI explores the site (via LLM for public URLs, via headless VM for authenticated) and generates scenes automatically.
-
-**Public site — fast LLM path (~10 seconds):**
-
-1. Call `create_script` with `url` and `goals` (e.g. `["Show pricing", "Highlight key features"]`)
-2. Tell the user: **"Generating a demo script — about 10 seconds."**
-3. Poll `get_script` every 10 seconds until status is `draft`
-4. Present the review (see **Reviewing the Draft** below)
-5. After user approves, call `make_portal`
-
-**Authenticated site — VM exploration (~60-120 seconds):**
-
-1. Call `create_script` with `url`, `goals`, AND `saved_state_id`
-2. Tell the user: **"Starting headless exploration of your authenticated app — this takes 1-2 minutes."**
-3. Warn: **"The AI navigates the browser autonomously. It avoids write operations but review carefully."**
-4. Poll `get_script` every 15-20 seconds until status is `draft`
-5. Present the review (see **Reviewing the Draft** below) — user should check actions carefully
-6. After user approves, call `make_portal`
+If unclear, ask. Then branch:
 
 ---
 
-## Reviewing the Draft
+#### Watch Mode
 
-When scenes are ready (from recording or AI generation), present a **complete review** to the user before creating the portal. This is the most important step — the user confirms everything looks right.
+**Watch + Public (no auth):**
 
-### 1. Mode selection
+Ask: **"Want me to generate the scenes, or record yourself?"**
 
-Ask: **"Should this be a guided demo (watch mode) or a free-browse experience (play mode)?"**
+- **Generate:** Call `create_script` with URL + goals → poll `get_script` (~12s)
+- **Record:** Call `record_demo` with URL → auto-open hosted_url → user demos → `stop_recording`
 
-- **Watch mode** — Agent leads the demo following the scenes with narration. The scenes become the script.
-- **Play mode** — Viewers explore freely with an AI copilot. No script needed, but use the generated knowledge and selectors.
+**Watch + Auth (has saved_state_id):**
 
-### 2. Formatted scenes (watch mode)
+Default to recording:
+1. Call `record_demo` with URL + `saved_state_id` → auto-open hosted_url
+2. Tell user: **"Getting recording ready — you're already signed in. Demo the flow, press stop when done."**
+3. Poll + compile
 
-Show each scene clearly:
+If user says "do it async" / "generate it":
+1. Call `create_script` with URL + `saved_state_id` + goals → VM exploration (~60-120s)
 
-```
-Scene 1: Homepage Overview
-  "Welcome to Acme — let me show you around the dashboard."
-  Actions: scroll down, click "Features", wait 2s
-
-Scene 2: Pricing Page
-  "Here's the pricing — three tiers starting with a free plan."
-  Actions: click "Pricing", scroll down
-
-Scene 3: Key Integration
-  "The API integrates in under 5 minutes with any framework."
-  Actions: click "Docs", click "Quickstart"
-```
-
-Ask: **"Want to edit, reorder, or remove any scenes?"**
-
-### 3. Example Q&A (review-only)
-
-If the script includes `example_qa`, show them so the user can verify the AI will say the right things:
-
-```
-Q: "What does Acme do?"
-A: "Acme provides real-time analytics for SaaS products." (source: page_content)
-
-Q: "How much does it cost?"
-A: "They offer multiple tiers — check the pricing page for current rates." (source: inferred)
-
-Q: "How does this compare to Mixpanel?"
-A: "Acme focuses on developer-first workflows with native API access." (source: inferred)
-```
-
-Ask: **"Are these answers accurate? Anything the AI should answer differently?"**
-
-### 4. Guardrails and selectors
-
-Show what will be blocked/allowed:
-
-**Blocked selectors** (elements hidden or disabled in the portal):
-```
-- a[href='/login'] ("Sign in" — auth flow)
-- .cookie-banner (cookie consent)
-- #delete-account (danger zone)
-```
-
-**Allowed URLs** (where viewers can navigate):
-```
-- acme.com/*
-- acme.com/pricing
-- acme.com/docs
-```
-
-Ask: **"Should anything else be blocked or allowed?"**
-
-### 5. Greeting and knowledge
-
-Show the AI agent's greeting and knowledge base summary. The user can tweak both.
-
-### 6. Final confirmation
-
-After all edits: **"Ready to create the portal? This uses 1 credit."**
+**Never scrape authenticated sites for selectors in watch mode** — we don't send autonomous agents through their product.
 
 ---
 
-## Storing Credentials (optional, reusable)
+#### Play Mode
 
-If a user wants to save login credentials for reuse across multiple portals:
+**Play + Public (no auth):**
 
-1. Call `create_credential` with name, domain, and values
-2. The `credential_id` can be passed to `create_script` for automated login during exploration
+Two offers:
+1. **Selector blocking:** "Want to block any buttons/elements on the page?"
+   - Yes → provide selectors (future: dedicated hosted tool)
+   - No → skip
+2. **AI context:** "Want us to check out the site to build context for the AI?"
+   - Yes → `create_script` to scrape content for knowledge base
+   - No → skip
+
+**Play + Auth (has saved_state_id):**
+
+Same offers BUT:
+- **Never scrape an authenticated site** — no autonomous browsing inside their product
+- Selector blocking = user specifies manually in chat
+- Knowledge/context = user provides it, not scraped
+
+---
+
+### Node C: Draft Review
+
+Present the draft:
+
+**Watch mode draft:**
+- Scenes with narration text and actions
+- Greeting
+- `example_qa` if generated — **always show these, never skip**
+
+**Play mode draft:**
+- Blocked selectors / disabled elements
+- Allowed URLs
+- Greeting
+- Knowledge context
+
+Ask: **"Here's the draft. Look good?"**
+
+If user wants edits → make them, re-present.
+
+**Ready to deploy:** "This uses 1 credit. Create the portal?"
+
+---
+
+### After Deploy
+
+1. Call `make_portal` → deploy → returns shareable URL
+2. Auto-open the portal URL
+3. Say: **"Check it out! Once you're happy:"**
+   - **Share this link** — send as-is
+   - **Create a limited-use link** — for controlled distribution
+   - **Embed it** on a specific URL
+   - **View session replays** — see what viewers did (`get_portal_sessions`)
+
+### If User Doesn't Like the Deploy
+
+Go back to **Node B** — they can switch modes, re-record, re-generate, or edit.
+
+---
+
+### Key Rules
+
+1. **Never scrape authenticated sites autonomously** — only user-controlled recording or explicit async generation
+2. **Err on "not sure"** for auth classification — wrong guess wastes time
+3. **Auto-open all hosted URLs** — never make the user copy-paste
+4. **Draft review is mandatory** — never skip Node C
+5. **Post-deploy is a conversation** — offer embed, limited links, session replays
 
 ---
 

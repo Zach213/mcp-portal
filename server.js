@@ -374,27 +374,39 @@ function registerTools(server, z, sessionState, getSessionId) {
       '',
       'AFTER AUTH, follow this flow:',
       '',
-      'NODE A — Entry type: Is the site public, needs auth, local, or not sure?',
-      '  Public (landing pages, docs, marketing) → skip to Node B.',
-      '  Needs auth (dashboards, admin, SaaS, settings) → call save_login.',
-      '    The user approves/denies via tool dialog. Don\'t ask separately.',
-      '  Local file → user provides path.',
-      '  Not sure → ASK: "Does [site] need you to be logged in?" Err on asking.',
+      'NODE A — Entry type classification:',
+      '  A1: Needs auth (dashboards, admin, SaaS, settings) → call save_login.',
+      '       User approves via tool dialog — don\'t ask separately. Auto-open hosted_url.',
+      '       Poll get_session until saved_state_id returned. → proceed to B.',
+      '  A2: Public (landing pages, docs, marketing) → proceed to B (no saved_state_id).',
+      '  A3: Local file / localhost → user provides path → proceed to B.',
+      '  A4: Not sure → ASK: "Does [site] need you to be logged in?" Err on asking.',
       '',
-      'NODE B — Mode: Ask "Play mode (you click, AI answers) or Watch mode (AI leads demo)?"',
-      '  Watch + public → ask: generate scenes or record yourself?',
-      '    Generate → create_script. Record → record_demo.',
-      '  Watch + auth → default to record_demo (auto-open hosted_url).',
-      '    If user says "do it async" → create_script with saved_state_id.',
-      '  Play + public → offer selector blocking + AI context scraping.',
-      '  Play + auth → manual selectors only. NEVER scrape auth sites autonomously.',
+      'NODE B — Mode selection (6 sub-nodes):',
+      '  B1: Watch — Record self → record_demo (hosted URL, user records, stop_recording).',
+      '  B2: Watch — AI script → create_script (public: HTTP fetch; auth: vm_single_page CDP grab, NO navigation).',
+      '  B3: Play — AI selectors (beta) → create_script in play mode, LLM generates blocked_selectors. Tell user this is beta.',
+      '  B4: Play — User selectors → pick_selectors (hosted URL, user clicks elements, pick_selectors_complete).',
+      '  B5: Not sure → offer ALL 4 options in one question:',
+      '       1. Watch — Record yourself giving the demo',
+      '       2. Watch — Let AI generate a script',
+      '       3. Play — Pick elements to block yourself',
+      '       4. Play — Let AI decide what to block (beta)',
+      '  NEVER autonomously navigate authenticated sites. Auth sites get single-page grab only.',
       '',
-      'NODE C — Draft review: SHOW THE FULL REVIEW (scenes + Q&A + selectors). Never skip.',
-      '  If approved → make_portal → shareable link (1 credit).',
-      '  After deploy → offer: share link, limited-use link, embed, or session replays.',
+      'NODE C — Draft review (mandatory, never skip):',
+      '  Watch draft: scenes + greeting + example_qa.',
+      '  Play draft: blocked selectors + greeting + allowed URLs + knowledge.',
+      '  If approved → make_portal → deploy → auto-open portal URL (1 credit). → Node D.',
       '  If rejected → back to Node B.',
       '',
-      'Other tools: list_portals, create_credential, buy_credits, get_portal_sessions.',
+      'NODE D — Post-deploy options:',
+      '  D1: configure_portal → set label + max_uses for attribution link.',
+      '  D2: configure_embed → set allowed_origin → returns <iframe> snippet.',
+      '  D3: get_portal_sessions → conversation logs + signed recording URLs.',
+      '  D4: Not happy → back to Node B.',
+      '',
+      'Other tools: list_portals, create_credential, buy_credits.',
       'New users get 3 creation credits + 10 view credits on sign-up.',
     ].join('\n'),
     {},
@@ -520,6 +532,43 @@ function registerTools(server, z, sessionState, getSessionId) {
   );
 
   server.tool(
+    'configure_portal',
+    [
+      'Set a label and usage limit on a portal share link.',
+      'Auto-refill stays enabled. The user can adjust further in the web UI.',
+      'Call after make_portal to customize the link before sharing.',
+    ].join('\n'),
+    {
+      portal_id: z.string().describe('Portal ID (e.g. ptl_...)'),
+      label: z.string().optional().describe('Human-readable label for the link'),
+      max_uses: z.number().optional().describe('Max viewer uses (0 = unlimited). Auto-refill stays on.'),
+    },
+    async ({ portal_id, label, max_uses }) => {
+      const key = getKey();
+      if (!key) return authError();
+      return apiCall('POST', `/v1/portals/${encodeURIComponent(portal_id)}/configure`, { label, max_uses }, key);
+    }
+  );
+
+  server.tool(
+    'configure_embed',
+    [
+      'Enable embedding for a portal on a specific website.',
+      'Ask the user what site they want to embed on (e.g. "https://yoursite.com").',
+      'Returns the embed URL and a ready-to-paste <iframe> snippet.',
+    ].join('\n'),
+    {
+      portal_id: z.string().describe('Portal ID (e.g. ptl_...)'),
+      allowed_origin: z.string().describe('The origin where the embed is allowed (e.g. "https://yoursite.com")'),
+    },
+    async ({ portal_id, allowed_origin }) => {
+      const key = getKey();
+      if (!key) return authError();
+      return apiCall('POST', `/v1/portals/${encodeURIComponent(portal_id)}/embed`, { allowed_origin }, key);
+    }
+  );
+
+  server.tool(
     'save_login',
     [
       'Capture a login for a website. IMMEDIATELY run a shell command to open the hosted_url — do NOT just print it.',
@@ -618,9 +667,52 @@ function registerTools(server, z, sessionState, getSessionId) {
   );
 
   server.tool(
+    'pick_selectors',
+    [
+      'Open a hosted browser where the user visually clicks elements to block in play mode.',
+      'IMMEDIATELY run a shell command to open the hosted_url — do NOT just print it.',
+      'Use: open "URL" (macOS) | xdg-open "URL" (Linux) | start "URL" (Windows).',
+      'User clicks elements in the browser → they appear as blocked selectors.',
+      'User clicks Done when finished. Poll get_session every 5s until status is "selectors_saved".',
+      'Then use the returned selectors as blocked_selectors in make_portal.',
+    ].join('\n'),
+    {
+      url: z.string().describe('The URL to load for element selection'),
+      saved_state_id: z.string().optional().describe('ID of a saved login if site needs auth'),
+      name: z.string().optional().describe('Label for this session'),
+    },
+    async ({ url, saved_state_id, name }) => {
+      const key = getKey();
+      if (!key) return authError();
+      const result = await apiCall('POST', '/v1/sessions/pick-selectors', { url, saved_state_id, name }, key);
+      const data = JSON.parse(result.content[0].text);
+      if (data.hosted_url) {
+        data.message = `Run a shell command NOW to open the hosted_url: open "${data.hosted_url}" (macOS), xdg-open (Linux), start (Windows). Do NOT just print the URL. Then poll get_session with the session_id every 5s until status is "selectors_saved".`;
+        result.content[0].text = JSON.stringify(data, null, 2);
+      }
+      return result;
+    }
+  );
+
+  server.tool(
+    'pick_selectors_complete',
+    [
+      'Retrieve the selectors the user picked in the hosted selector UI.',
+      'Call this after get_session shows status "selectors_saved".',
+      'Returns the selectors array to use as blocked_selectors in make_portal.',
+    ].join('\n'),
+    { session_id: z.string() },
+    async ({ session_id }) => {
+      const key = getKey();
+      if (!key) return authError();
+      return apiCall('GET', `/v1/sessions/${encodeURIComponent(session_id)}`, undefined, key);
+    }
+  );
+
+  server.tool(
     'get_session',
     [
-      'Poll the status of a login or recording session.',
+      'Poll the status of a login, recording, or selector session.',
       '',
       'Login session statuses:',
       '  "awaiting_login" → user has not saved yet, keep polling',
@@ -634,6 +726,10 @@ function registerTools(server, z, sessionState, getSessionId) {
       '  "compiling" → stop was pressed, scenes being compiled',
       '  "compiled" → done, compiled scenes are in the response as "script"',
       '  "compile_failed" → compilation failed',
+      '',
+      'Selector session statuses:',
+      '  "awaiting_selection" → selector mode loading on VM',
+      '  "selectors_saved" → user clicked Done, selectors array is in the response',
       '',
       'Poll every 5 seconds. The user presses buttons in the hosted UI to trigger transitions.',
     ].join('\n'),

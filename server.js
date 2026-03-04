@@ -446,9 +446,9 @@ function registerTools(server, z, sessionState, getSessionId) {
   server.tool(
     'save_login',
     [
-      'Capture a login for a website. Opens a hosted browser where the user logs in and presses Save — returns a saved_state_id.',
-      '',
-      'Tell the user to open the hosted_url and log in normally. Poll get_session every 5s.',
+      'Capture a login for a website. IMMEDIATELY run a shell command to open the hosted_url — do NOT just print it.',
+      'Use: open "URL" (macOS) | xdg-open "URL" (Linux) | start "URL" (Windows).',
+      'User logs in normally in the hosted browser and presses Save. Poll get_session every 10s.',
       'When status is "ready", the login state is saved. Do NOT wait for the user to tell you verbally.',
     ].join('\n'),
     {
@@ -458,7 +458,13 @@ function registerTools(server, z, sessionState, getSessionId) {
     async ({ url, name }) => {
       const key = getKey();
       if (!key) return authError();
-      return apiCall('POST', '/v1/sessions/login', { url, name }, key);
+      const result = await apiCall('POST', '/v1/sessions/login', { url, name }, key);
+      const data = JSON.parse(result.content[0].text);
+      if (data.hosted_url) {
+        data.message = `Run a shell command NOW to open the hosted_url: open "${data.hosted_url}" (macOS), xdg-open (Linux), start (Windows). Do NOT just print the URL. Then poll get_session with the session_id every 10s until status is "ready".`;
+        result.content[0].text = JSON.stringify(data, null, 2);
+      }
+      return result;
     }
   );
 
@@ -484,10 +490,10 @@ function registerTools(server, z, sessionState, getSessionId) {
   server.tool(
     'record_demo',
     [
-      'Record a demo by clicking through a site yourself. Opens a hosted browser — you click around, then press Stop to compile scenes.',
-      '',
-      'Tell user to open hosted_url, click through what they want to demo, then press Stop.',
-      'Poll get_session every 5s. When "compiled", present scenes for review, then call make_portal.',
+      'Record a demo by clicking through a site yourself. IMMEDIATELY run a shell command to open the hosted_url — do NOT just print it.',
+      'Use: open "URL" (macOS) | xdg-open "URL" (Linux) | start "URL" (Windows).',
+      'User clicks through the demo in the hosted browser, then presses Stop to compile scenes.',
+      'Poll get_session every 10s. When "compiled", present scenes for review, then call make_portal.',
     ].join('\n'),
     {
       url: z.string().describe('The URL to record a demo on'),
@@ -497,7 +503,13 @@ function registerTools(server, z, sessionState, getSessionId) {
     async ({ url, saved_state_id, name }) => {
       const key = getKey();
       if (!key) return authError();
-      return apiCall('POST', '/v1/sessions/record', { url, saved_state_id, name }, key);
+      const result = await apiCall('POST', '/v1/sessions/record', { url, saved_state_id, name }, key);
+      const data = JSON.parse(result.content[0].text);
+      if (data.hosted_url) {
+        data.message = `Run a shell command NOW to open the hosted_url: open "${data.hosted_url}" (macOS), xdg-open (Linux), start (Windows). Do NOT just print the URL. Then poll get_session with the session_id every 10s until status is "compiled".`;
+        result.content[0].text = JSON.stringify(data, null, 2);
+      }
+      return result;
     }
   );
 

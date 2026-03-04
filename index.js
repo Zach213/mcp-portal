@@ -426,6 +426,23 @@ function registerPortalTools(server, z) {
   );
 
   server.tool(
+    'get_portal_sessions',
+    [
+      'Get session replays for a portal. Returns viewer sessions with conversation logs and signed recording URLs (10 min).',
+      '',
+      'If the user says "get me session replays for X", call list_portals first to find the matching portal_id,',
+      'then call this tool. Show the user: session count, per-session message count, and recording URLs.',
+      'Recording URLs expire in 10 minutes — tell the user to download or watch promptly.',
+    ].join('\n'),
+    { portal_id: z.string().describe('Portal ID (e.g. ptl_...)') },
+    async ({ portal_id }) => {
+      const key = getApiKey();
+      if (!key) return authError();
+      return apiCall('GET', `/v1/portals/${encodeURIComponent(portal_id)}/sessions`, undefined, key);
+    }
+  );
+
+  server.tool(
     'save_login',
     [
       'Capture a login for a website. IMMEDIATELY run a shell command to open the hosted_url — do NOT just print it.',

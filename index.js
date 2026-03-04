@@ -145,9 +145,84 @@ async function pollForApproval(deviceCode) {
   return { status: 'timeout' };
 }
 
+// ── Tool call logging (local JSONL files) ──
+
+const LOCAL_SESSION_ID = `local_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+const LOGS_DIR = path.join(CREDENTIALS_DIR, 'logs');
+const LOG_FILE = path.join(LOGS_DIR, `${LOCAL_SESSION_ID}.jsonl`);
+
+const SENSITIVE_TOOLS = new Set(['create_credential']);
+
+function redactInput(toolName, input) {
+  if (SENSITIVE_TOOLS.has(toolName) && input?.values) {
+    return { ...input, values: '[REDACTED]' };
+  }
+  return input;
+}
+
+function logToolCall(toolName, input, outputPreview, isError, durationMs) {
+  try {
+    if (!fs.existsSync(LOGS_DIR)) {
+      fs.mkdirSync(LOGS_DIR, { recursive: true, mode: 0o700 });
+    }
+    const entry = {
+      tool_name: toolName,
+      input: redactInput(toolName, input),
+      output_preview: (outputPreview || '').slice(0, 500),
+      is_error: isError,
+      duration_ms: durationMs,
+      timestamp: new Date().toISOString(),
+    };
+    fs.appendFileSync(LOG_FILE, JSON.stringify(entry) + '\n', { mode: 0o600 });
+  } catch {
+    // Non-critical — don't break tool execution
+  }
+}
+
+function readLocalLogs(sessionId) {
+  const target = sessionId ? path.join(LOGS_DIR, `${sessionId}.jsonl`) : LOG_FILE;
+  if (!fs.existsSync(target)) return [];
+  return fs.readFileSync(target, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map(line => { try { return JSON.parse(line); } catch { return null; } })
+    .filter(Boolean);
+}
+
+function listLocalSessions() {
+  if (!fs.existsSync(LOGS_DIR)) return [];
+  return fs.readdirSync(LOGS_DIR)
+    .filter(f => f.endsWith('.jsonl'))
+    .map(f => f.replace('.jsonl', ''))
+    .sort()
+    .reverse();
+}
+
+function wrapWithLogging(server) {
+  const original = server.tool.bind(server);
+  server.tool = (name, description, schema, handler) => {
+    const wrapped = async (args) => {
+      const start = Date.now();
+      try {
+        const result = await handler(args);
+        const dur = Date.now() - start;
+        const preview = result?.content?.[0]?.text?.slice(0, 500) || '';
+        logToolCall(name, args, preview, !!result?.isError, dur);
+        return result;
+      } catch (err) {
+        const dur = Date.now() - start;
+        logToolCall(name, args, err.message, true, dur);
+        throw err;
+      }
+    };
+    return original(name, description, schema, wrapped);
+  };
+}
+
 // ── Tool registration ──
 
 function registerPortalTools(server, z) {
+  wrapWithLogging(server);
   // Auth tools (always available)
 
   server.tool(
@@ -333,6 +408,7 @@ function registerPortalTools(server, z) {
           text: JSON.stringify({
             authenticated: !!key,
             email: creds?.email || (process.env.PORTAL_API_KEY ? '(from PORTAL_API_KEY env)' : null),
+            mcp_session_id: LOCAL_SESSION_ID,
             source,
             api_url: PORTAL_API,
           }, null, 2),
@@ -683,6 +759,41 @@ function registerPortalTools(server, z) {
       const key = getApiKey();
       if (!key) return authError();
       return apiCall('POST', '/v1/auth/credits/checkout', { pack_id }, key);
+    }
+  );
+
+  server.tool(
+    'get_creation_logs',
+    [
+      'Retrieve the tool call log for an MCP session. Shows every tool called, inputs, outputs, errors, and timing.',
+      '',
+      'Use this to debug portal creation issues — see exactly what tools were called and what they returned.',
+      'The current session\'s ID is in the portal_status response as mcp_session_id.',
+      'If no session_id is provided, returns logs for the current session.',
+      'Pass session_id="list" to see all available local sessions.',
+    ].join('\n'),
+    { session_id: z.string().optional().describe('MCP session ID, or "list" to see all sessions') },
+    async ({ session_id }) => {
+      if (session_id === 'list') {
+        const sessions = listLocalSessions();
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({ sessions, count: sessions.length, log_dir: LOGS_DIR }, null, 2),
+          }],
+        };
+      }
+      const calls = readLocalLogs(session_id);
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            session_id: session_id || LOCAL_SESSION_ID,
+            call_count: calls.length,
+            calls,
+          }, null, 2),
+        }],
+      };
     }
   );
 }

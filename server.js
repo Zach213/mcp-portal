@@ -151,9 +151,62 @@ async function restoreSession(sessionId) {
   }
 }
 
+// ── Tool call logging (fire-and-forget to backend) ──
+
+const SENSITIVE_TOOLS = new Set(['create_credential']);
+
+function redactInput(toolName, input) {
+  if (SENSITIVE_TOOLS.has(toolName) && input?.values) {
+    return { ...input, values: '[REDACTED]' };
+  }
+  return input;
+}
+
+function logToolCall(sessionId, toolName, input, outputPreview, isError, durationMs, email) {
+  if (!sessionId || !INTERNAL_SECRET) return;
+  fetch(`${PORTAL_API}/v1/auth/mcp-log`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-internal-secret': INTERNAL_SECRET,
+    },
+    body: JSON.stringify({
+      session_id: sessionId,
+      tool_name: toolName,
+      input: redactInput(toolName, input),
+      output_preview: outputPreview,
+      is_error: isError,
+      duration_ms: durationMs,
+      user_email: email,
+    }),
+  }).catch(() => {});
+}
+
+function wrapWithLogging(server, sessionState, getSessionId) {
+  const original = server.tool.bind(server);
+  server.tool = (name, description, schema, handler) => {
+    const wrapped = async (args) => {
+      const start = Date.now();
+      try {
+        const result = await handler(args);
+        const dur = Date.now() - start;
+        const preview = result?.content?.[0]?.text?.slice(0, 500) || '';
+        logToolCall(getSessionId?.(), name, args, preview, !!result?.isError, dur, sessionState.email);
+        return result;
+      } catch (err) {
+        const dur = Date.now() - start;
+        logToolCall(getSessionId?.(), name, args, err.message, true, dur, sessionState.email);
+        throw err;
+      }
+    };
+    return original(name, description, schema, wrapped);
+  };
+}
+
 // ── Tool registration ──
 
 function registerTools(server, z, sessionState, getSessionId) {
+  wrapWithLogging(server, sessionState, getSessionId);
   const getKey = () => sessionState.apiKey || null;
 
   // ── Auth tools (always available) ──
@@ -352,6 +405,7 @@ function registerTools(server, z, sessionState, getSessionId) {
           text: JSON.stringify({
             authenticated: !!getKey(),
             email: sessionState.email || null,
+            mcp_session_id: getSessionId?.() || null,
             api_url: PORTAL_API,
           }, null, 2),
         }],
@@ -701,6 +755,42 @@ function registerTools(server, z, sessionState, getSessionId) {
       const key = getKey();
       if (!key) return authError();
       return apiCall('POST', '/v1/auth/credits/checkout', { pack_id }, key);
+    }
+  );
+
+  server.tool(
+    'get_creation_logs',
+    [
+      'Retrieve the tool call log for an MCP session. Shows every tool called, inputs, outputs, errors, and timing.',
+      '',
+      'Use this to debug portal creation issues — see exactly what tools were called and what they returned.',
+      'The current session\'s ID is in the portal_status response as mcp_session_id.',
+      'If no session_id is provided, returns logs for the current session.',
+    ].join('\n'),
+    { session_id: z.string().optional().describe('MCP session ID (defaults to current session)') },
+    async ({ session_id }) => {
+      const sid = session_id || getSessionId?.();
+      if (!sid) {
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ error: 'No session ID available' }, null, 2) }],
+          isError: true,
+        };
+      }
+      try {
+        const res = await fetch(`${PORTAL_API}/v1/auth/mcp-logs/${encodeURIComponent(sid)}`, {
+          headers: { 'x-internal-secret': INTERNAL_SECRET },
+        });
+        const data = await res.json();
+        return {
+          content: [{ type: 'text', text: JSON.stringify(data, null, 2) }],
+          isError: !res.ok,
+        };
+      } catch (err) {
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ error: err.message }, null, 2) }],
+          isError: true,
+        };
+      }
     }
   );
 }

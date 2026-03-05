@@ -473,17 +473,20 @@ function registerPortalTools(server, z) {
       '  ptl.guardrails.allowed_urls, ptl.guardrails.disabled_elements',
       '  Actions: click (selector), scroll_up, scroll_down, wait (ms), type (selector + text)',
       '  NO other top-level keys allowed — additionalProperties is strict.',
+      '',
+      'For authenticated sites: pass saved_state_id from save_login so the portal VM loads the logged-in session.',
     ].join('\n'),
     {
       ptl: z.object({}).passthrough(),
+      saved_state_id: z.string().optional().describe('Saved login state from save_login — portal VM will load this session'),
       idempotency_key: z.string().optional(),
       dry_run: z.boolean().optional(),
     },
-    async ({ ptl, idempotency_key, dry_run }) => {
+    async ({ ptl, saved_state_id, idempotency_key, dry_run }) => {
       const key = getApiKey();
       if (!key) return authError();
       const idemKey = idempotency_key || crypto.randomUUID();
-      return apiCall('POST', '/v1/portals', { ptl, idempotency_key: idemKey, dry_run }, key);
+      return apiCall('POST', '/v1/portals', { ptl, saved_state_id, idempotency_key: idemKey, dry_run }, key);
     }
   );
 

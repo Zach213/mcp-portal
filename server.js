@@ -568,10 +568,10 @@ function registerTools(server, z, sessionState, getSessionId) {
       label: z.string().optional().describe('Label for the share link (e.g. "outbound-email-feb")'),
       max_uses: z.number().optional().describe('Max viewer uses (0 = unlimited). Auto-refill stays on.'),
     },
-    async ({ portal_id, label, max_uses }) => {
+    async ({ portal_id, name, label, max_uses }) => {
       const key = getKey();
       if (!key) return authError();
-      return apiCall('POST', `/v1/portals/${encodeURIComponent(portal_id)}/configure`, { label, max_uses }, key);
+      return apiCall('POST', `/v1/portals/${encodeURIComponent(portal_id)}/configure`, { name, label, max_uses }, key);
     }
   );
 

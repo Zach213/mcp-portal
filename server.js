@@ -557,13 +557,15 @@ function registerTools(server, z, sessionState, getSessionId) {
   server.tool(
     'configure_portal',
     [
-      'Set a label and usage limit on a portal share link.',
+      'Name a portal and set usage limits on its share link.',
       'Auto-refill stays enabled. The user can adjust further in the web UI.',
       'Call after make_portal to customize the link before sharing.',
+      'The URL slug is set at creation time via ptl.slug (e.g. makeportals.com/demo/{slug}/{code}).',
     ].join('\n'),
     {
       portal_id: z.string().describe('Portal ID (e.g. ptl_...)'),
-      label: z.string().optional().describe('Human-readable label for the link'),
+      name: z.string().optional().describe('Display name for this portal (e.g. "Stripe Demo for Sales")'),
+      label: z.string().optional().describe('Label for the share link (e.g. "outbound-email-feb")'),
       max_uses: z.number().optional().describe('Max viewer uses (0 = unlimited). Auto-refill stays on.'),
     },
     async ({ portal_id, label, max_uses }) => {

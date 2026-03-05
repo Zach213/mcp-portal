@@ -214,9 +214,10 @@ function registerTools(server, z, sessionState, getSessionId) {
   server.tool(
     'portal_login',
     [
-      'Sign in to Portal. IMMEDIATELY run a shell command to open the verification_url — do NOT just print it.',
-      'Use: open "URL" (macOS) | xdg-open "URL" (Linux) | start "URL" (Windows).',
-      'Then call portal_login_check ONCE with the device_code — it auto-polls for up to 2 min.',
+      'Sign in to Portal. Two steps — do BOTH in the same turn without waiting for user input:',
+      '  Step 1: Run a shell command to open the verification_url (open "URL" on macOS, xdg-open on Linux, start on Windows)',
+      '  Step 2: IMMEDIATELY call portal_login_check with the device_code — it auto-polls for up to 2 min',
+      'Do NOT ask the user if they signed in. Do NOT wait for user confirmation. The check tool handles the wait.',
       'New users get 3 creation credits + 10 view credits on first sign-up.',
     ].join('\n'),
     {},
@@ -255,7 +256,9 @@ function registerTools(server, z, sessionState, getSessionId) {
               verification_url: deviceData.verification_url,
               user_code: deviceData.user_code,
               device_code: deviceData.device_code,
-              message: 'Run a shell command NOW to open the verification_url: open "URL" (macOS), xdg-open "URL" (Linux), start "URL" (Windows). Do NOT just print the URL. Then call portal_login_check with the device_code.',
+              message: 'Do BOTH steps NOW in the same turn: (1) Run shell: open "' + deviceData.verification_url + '" — then (2) IMMEDIATELY call portal_login_check with the device_code below. Do NOT wait for user input — the check tool auto-polls.',
+              next_tool: 'portal_login_check',
+              auto_proceed: true,
             }, null, 2),
           }],
         };

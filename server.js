@@ -228,7 +228,7 @@ function registerTools(server, z, sessionState, getSessionId) {
       'Do NOT ask the user if they signed in — the check tool handles the wait.',
       'New users get 3 creation credits + 10 view credits on first sign-up.',
     ].join('\n'),
-    z.object({}),
+    {},
     async () => {
       if (getKey()) {
         return {
@@ -612,8 +612,8 @@ function registerTools(server, z, sessionState, getSessionId) {
       'Enable embedding for a portal on a specific website.',
       'Ask the user what site they want to embed on (e.g. "https://yoursite.com").',
       'Returns the embed URL, an <iframe> snippet, and a console_snippet.',
-      'The console_snippet is a browser-console-friendly one-liner (no line breaks, no template literals).',
-      'Give the user the console_snippet value directly — they paste it into DevTools console to preview.',
+      'The console_snippet is a browser-console-friendly script (short lines, no template literals).',
+      'Give the user the console_snippet value in a code block — they paste it into DevTools console to preview.',
     ].join('\n'),
     {
       portal_id: z.string().describe('Portal ID (e.g. ptl_...)'),

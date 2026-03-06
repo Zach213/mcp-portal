@@ -214,13 +214,15 @@ function registerTools(server, z, sessionState, getSessionId) {
   server.tool(
     'portal_login',
     [
-      'Sign in to Portal. Two steps — do BOTH in the same turn without waiting for user input:',
-      '  Step 1: Run a shell command to open the verification_url (open "URL" on macOS, xdg-open on Linux, start on Windows)',
-      '  Step 2: IMMEDIATELY call portal_login_check with the device_code — it auto-polls for up to 2 min',
-      'Do NOT ask the user if they signed in. Do NOT wait for user confirmation. The check tool handles the wait.',
+      'Sign in to Portal. Returns a verification_url and device_code.',
+      'After this tool returns, in your NEXT tool call batch (not this one):',
+      '  1. Run a shell command: open "VERIFICATION_URL" (macOS) | xdg-open (Linux) | start (Windows)',
+      '  2. Call portal_login_check with the device_code — it auto-polls for up to 2 min',
+      'Steps 1 and 2 CAN run in parallel with each other, but MUST come AFTER portal_login returns.',
+      'Do NOT ask the user if they signed in. The check tool handles the wait automatically.',
       'New users get 3 creation credits + 10 view credits on first sign-up.',
     ].join('\n'),
-    {},
+    z.object({}),
     async () => {
       if (getKey()) {
         return {
@@ -256,7 +258,7 @@ function registerTools(server, z, sessionState, getSessionId) {
               verification_url: deviceData.verification_url,
               user_code: deviceData.user_code,
               device_code: deviceData.device_code,
-              message: 'Do BOTH steps NOW in the same turn: (1) Run shell: open "' + deviceData.verification_url + '" — then (2) IMMEDIATELY call portal_login_check with the device_code below. Do NOT wait for user input — the check tool auto-polls.',
+              message: 'In your NEXT tool call batch (after this returns): (1) run shell: open "' + deviceData.verification_url + '" AND (2) call portal_login_check with the device_code. These two can be parallel. Do NOT wait for user input.',
               next_tool: 'portal_login_check',
               auto_proceed: true,
             }, null, 2),
@@ -599,10 +601,13 @@ function registerTools(server, z, sessionState, getSessionId) {
   server.tool(
     'save_login',
     [
-      'Capture a login for a website. IMMEDIATELY run a shell command to open the hosted_url — do NOT just print it.',
-      'Use: open "URL" (macOS) | xdg-open "URL" (Linux) | start "URL" (Windows).',
-      'User logs in normally in the hosted browser and presses Save. Poll get_session every 10s.',
-      'When status is "ready", the login state is saved. Do NOT wait for the user to tell you verbally.',
+      'Capture a login for a website. After this returns, in your next tool call batch:',
+      '  1. Run shell: open "HOSTED_URL" (macOS) | xdg-open (Linux) | start (Windows)',
+      '  2. Call get_session with the session_id to start polling',
+      'Then poll get_session every 10s in a LOOP for up to 5 min. NEVER stop to ask the user.',
+      'Do NOT say "let me know when you\'re done" — just keep polling silently.',
+      'When status is "ready", the login is saved. Proceed immediately to the next step.',
+      'When status is "ready" and credentials_stored is true, a credential vault entry was also saved.',
     ].join('\n'),
     {
       url: z.string().describe('The URL to navigate to for login'),
@@ -614,7 +619,8 @@ function registerTools(server, z, sessionState, getSessionId) {
       const result = await apiCall('POST', '/v1/sessions/login', { url, name }, key);
       const data = JSON.parse(result.content[0].text);
       if (data.hosted_url) {
-        data.message = `Run a shell command NOW to open the hosted_url: open "${data.hosted_url}" (macOS), xdg-open (Linux), start (Windows). Do NOT just print the URL. Then poll get_session with the session_id every 10s until status is "ready".`;
+        data.message = `In your NEXT tool call batch: (1) run shell: open "${data.hosted_url}" and (2) call get_session to start polling. Then keep polling every 10s until status is "ready". NEVER ask the user if they saved.`;
+        data.auto_proceed = true;
         result.content[0].text = JSON.stringify(data, null, 2);
       }
       return result;
@@ -643,10 +649,13 @@ function registerTools(server, z, sessionState, getSessionId) {
   server.tool(
     'record_demo',
     [
-      'Record a demo by clicking through a site yourself. IMMEDIATELY run a shell command to open the hosted_url — do NOT just print it.',
-      'Use: open "URL" (macOS) | xdg-open "URL" (Linux) | start "URL" (Windows).',
-      'User clicks through the demo in the hosted browser, then presses Stop to compile scenes.',
-      'Poll get_session every 10s. When "compiled", present scenes for review, then call make_portal.',
+      'Record a demo by clicking through a site. After this returns, in your next tool call batch:',
+      '  1. Run shell: open "HOSTED_URL" (macOS) | xdg-open (Linux) | start (Windows)',
+      '  2. Call get_session with the session_id to start polling',
+      'Then poll get_session every 10s in a LOOP for up to 10 min. NEVER stop to ask the user.',
+      'Do NOT say "let me know when you\'re done" — just keep polling silently.',
+      'Status flow: awaiting_recording → recording → compiling → compiled.',
+      'When "compiled", present the full review (scenes, Q&A, selectors, greeting) and get approval before make_portal.',
     ].join('\n'),
     {
       url: z.string().describe('The URL to record a demo on'),
@@ -659,7 +668,8 @@ function registerTools(server, z, sessionState, getSessionId) {
       const result = await apiCall('POST', '/v1/sessions/record', { url, saved_state_id, name }, key);
       const data = JSON.parse(result.content[0].text);
       if (data.hosted_url) {
-        data.message = `Run a shell command NOW to open the hosted_url: open "${data.hosted_url}" (macOS), xdg-open (Linux), start (Windows). Do NOT just print the URL. Then poll get_session with the session_id every 10s until status is "compiled".`;
+        data.message = `In your NEXT tool call batch: (1) run shell: open "${data.hosted_url}" and (2) call get_session to start polling. Then keep polling every 10s until status is "compiled". NEVER ask the user if they recorded.`;
+        data.auto_proceed = true;
         result.content[0].text = JSON.stringify(data, null, 2);
       }
       return result;
@@ -682,9 +692,14 @@ function registerTools(server, z, sessionState, getSessionId) {
     [
       'Stop recording and compile the demo into structured scenes.',
       'Returns compiled scenes with narration, actions, selectors, and Q&A.',
-      'Present the FULL review to the user (same as get_script review checklist):',
-      '  mode choice, scenes, example Q&A, selectors, greeting, knowledge.',
-      'Then call make_portal after user approves.',
+      'BEFORE calling make_portal, you MUST present a full review to the user:',
+      '  1. MODE: watch (guided) or play (free-browse)?',
+      '  2. SCENES: each scene with narration + actions',
+      '  3. EXAMPLE Q&A: every Q&A pair for user to verify',
+      '  4. SELECTORS: blocked elements + allowed URLs',
+      '  5. GREETING + KNOWLEDGE: AI greeting and knowledge summary',
+      '  6. CONFIRM: "Ready to deploy? This uses 1 credit."',
+      'Do NOT skip the review. Do NOT deploy without explicit approval.',
     ].join('\n'),
     { session_id: z.string() },
     async ({ session_id }) => {
@@ -698,11 +713,14 @@ function registerTools(server, z, sessionState, getSessionId) {
     'pick_selectors',
     [
       'Open a hosted browser where the user visually clicks elements to block in play mode.',
-      'IMMEDIATELY run a shell command to open the hosted_url — do NOT just print it.',
-      'Use: open "URL" (macOS) | xdg-open "URL" (Linux) | start "URL" (Windows).',
-      'User clicks elements in the browser → they appear as blocked selectors.',
-      'User clicks Done when finished. Poll get_session every 5s until status is "selectors_saved".',
-      'Then use the returned selectors as blocked_selectors in make_portal.',
+      'After this returns, in your next tool call batch:',
+      '  1. Run shell: open "HOSTED_URL" (macOS) | xdg-open (Linux) | start (Windows)',
+      '  2. Call get_session with the session_id to start polling',
+      'Then poll get_session every 5s in a LOOP for up to 5 min. NEVER stop to ask the user.',
+      'Do NOT say "click Done when finished" — just keep polling silently.',
+      'When status is "selectors_saved", present a summary of what will be deployed:',
+      '  - Mode, URL, selectors to block, greeting, knowledge',
+      '  - Ask "Ready to deploy? (1 credit)" before calling make_portal.',
     ].join('\n'),
     {
       url: z.string().describe('The URL to load for element selection'),
@@ -715,7 +733,8 @@ function registerTools(server, z, sessionState, getSessionId) {
       const result = await apiCall('POST', '/v1/sessions/pick-selectors', { url, saved_state_id, name }, key);
       const data = JSON.parse(result.content[0].text);
       if (data.hosted_url) {
-        data.message = `Run a shell command NOW to open the hosted_url: open "${data.hosted_url}" (macOS), xdg-open (Linux), start (Windows). Do NOT just print the URL. Then poll get_session with the session_id every 5s until status is "selectors_saved".`;
+        data.message = `In your NEXT tool call batch: (1) run shell: open "${data.hosted_url}" and (2) call get_session to start polling. Then keep polling every 5s until status is "selectors_saved". NEVER ask the user if they're done.`;
+        data.auto_proceed = true;
         result.content[0].text = JSON.stringify(data, null, 2);
       }
       return result;
@@ -728,6 +747,9 @@ function registerTools(server, z, sessionState, getSessionId) {
       'Retrieve the selectors the user picked in the hosted selector UI.',
       'Call this after get_session shows status "selectors_saved".',
       'Returns the selectors array to use as blocked_selectors in make_portal.',
+      'BEFORE calling make_portal, show the user a deployment summary:',
+      '  - URL, mode (play), blocked selectors, greeting, knowledge',
+      '  - Ask "Ready to deploy? This uses 1 credit." and wait for approval.',
     ].join('\n'),
     { session_id: z.string() },
     async ({ session_id }) => {

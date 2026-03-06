@@ -25,7 +25,7 @@ if (!PORTAL_API) {
 }
 
 const PORT = process.env.PORT || 3000;
-const SESSION_TTL_MS = parseInt(process.env.SESSION_TTL_MS, 10) || 30 * 60 * 1000;
+const SESSION_TTL_MS = parseInt(process.env.SESSION_TTL_MS, 10) || 4 * 60 * 60 * 1000;
 const POLL_INTERVAL_MS = 5000;
 const POLL_TIMEOUT_MS = 10 * 60 * 1000;
 const INTERNAL_SECRET = process.env.INTERNAL_API_SECRET || '';
@@ -94,11 +94,11 @@ function authError() {
     content: [{
       type: 'text',
       text: JSON.stringify({
-        code: 'not_authenticated',
-        message: 'Not authenticated. Run the portal_login tool first — it opens a one-time browser link to sign in with Google.',
+        status: 'not_authenticated',
+        action: 'call portal_login',
+        message: 'Not signed in yet. Call the portal_login tool to authenticate — it returns a browser link for one-time Google sign-in.',
       }, null, 2),
     }],
-    isError: true,
   };
 }
 
@@ -466,6 +466,9 @@ function registerTools(server, z, sessionState, getSessionId) {
   server.tool(
     'make_portal',
     [
+      'STOP: You MUST show the user a draft summary (greeting, selectors, mode, URL) and ask for a name BEFORE calling this tool.',
+      'If you have not done that yet, do it now instead of calling make_portal.',
+      '',
       'Create a Portal and get a shareable link (1 credit). Returns a URL to a live, sandboxed browser session — 10 min per viewer.',
       '',
       'Validates the spec internally — do NOT call validate_ptl or normalize_ptl first.',
@@ -473,7 +476,8 @@ function registerTools(server, z, sessionState, getSessionId) {
       'When ready, open the URL in the user\'s browser automatically.',
       '',
       'For watch mode: prefer create_script for scene quality.',
-      'Pass the portal name from Node C as ptl.name if the user gave one.',
+      'Set ptl.slug to a URL-friendly name (e.g. "reddit-demo"). This becomes the URL path: makeportals.com/demo/{slug}/...',
+      'If the user gave a name at Node C, slugify it (lowercase, hyphens, no spaces). Auto-generate from site name if none given.',
       'After deploying, open the URL and say "Check it out! Happy to tweak it." Offer embedding/links/replays.',
       '',
       'Schema (ALL fields nested under ptl object — matches makeportals.com/docs/portal-spec):',
@@ -491,8 +495,8 @@ function registerTools(server, z, sessionState, getSessionId) {
       '    Advanced: use "scenes" instead for actions: [{script, actions: [{action, selector?, text?, ms?}]}]',
       '    Actions: click (selector), scroll_up, scroll_down, wait (ms), type (selector + text)',
       '',
-      '  ptl.guardrails.allowed_urls — URLs the user can visit in play mode',
-      '  ptl.guardrails.blocked_selectors — CSS selectors to hide (e.g. "#delete-account", ".danger-zone")',
+      '  ptl.guardrails.allowed_urls — URLs the user can visit in play mode (array of strings)',
+      '  ptl.guardrails.blocked_selectors — CSS selectors to disable (e.g. "#delete-account", ".danger-zone"). ONLY use selectors from a real DOM snapshot — never guess.',
       '  ptl.guardrails.apis — API blocking: { blocked: ["DELETE /api/account"], block_uploads: true }',
       '',
       'Minimal example: { entry: { url: "https://example.com" }, experience: { mode: "play" } }',
@@ -507,16 +511,29 @@ function registerTools(server, z, sessionState, getSessionId) {
       'For authenticated sites: pass saved_state_id from save_login so the portal VM loads the logged-in session.',
     ].join('\n'),
     {
+      name: z.string().describe('Portal name (e.g. "Reddit Demo", "Acme Product Tour"). Ask the user or auto-generate from the site/content.'),
       ptl: z.object({}).passthrough(),
       saved_state_id: z.string().optional().describe('Saved login state from save_login — portal VM will load this session'),
       idempotency_key: z.string().optional(),
       dry_run: z.boolean().optional(),
     },
-    async ({ ptl, saved_state_id, idempotency_key, dry_run }) => {
+    async ({ name, ptl, saved_state_id, idempotency_key, dry_run }) => {
       const key = getKey();
       if (!key) return authError();
+      if (!name || typeof name !== 'string' || !name.trim()) {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              code: 'name_required',
+              message: 'A portal name is required. Ask the user what they want to call this portal, or auto-generate a name from the site content.',
+            }, null, 2),
+          }],
+          isError: true,
+        };
+      }
       const idem = idempotency_key || crypto.randomUUID();
-      return apiCall('POST', '/v1/portals', { ptl, saved_state_id, idempotency_key: idem, dry_run }, key);
+      return apiCall('POST', '/v1/portals', { name: name.trim(), ptl, saved_state_id, idempotency_key: idem, dry_run }, key);
     }
   );
 
@@ -594,9 +611,9 @@ function registerTools(server, z, sessionState, getSessionId) {
     [
       'Enable embedding for a portal on a specific website.',
       'Ask the user what site they want to embed on (e.g. "https://yoursite.com").',
-      'Returns the embed URL and a ready-to-paste <iframe> snippet.',
-      'ALSO give the user a browser-console one-liner to preview immediately:',
-      '  document.body.innerHTML=\'<iframe src="EMBED_URL" width="100%" height="700" style="border:none;border-radius:12px" allow="microphone;camera" loading="lazy"></iframe>\';',
+      'Returns the embed URL, an <iframe> snippet, and a console_snippet.',
+      'The console_snippet is a browser-console-friendly one-liner (no line breaks, no template literals).',
+      'Give the user the console_snippet value directly — they paste it into DevTools console to preview.',
     ].join('\n'),
     {
       portal_id: z.string().describe('Portal ID (e.g. ptl_...)'),

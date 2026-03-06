@@ -215,11 +215,17 @@ function registerTools(server, z, sessionState, getSessionId) {
     'portal_login',
     [
       'Sign in to Portal. Returns a verification_url and device_code.',
-      'After this tool returns, in your NEXT tool call batch (not this one):',
-      '  1. Run a shell command: open "VERIFICATION_URL" (macOS) | xdg-open (Linux) | start (Windows)',
-      '  2. Call portal_login_check with the device_code — it auto-polls for up to 2 min',
-      'Steps 1 and 2 CAN run in parallel with each other, but MUST come AFTER portal_login returns.',
-      'Do NOT ask the user if they signed in. The check tool handles the wait automatically.',
+      '',
+      'After this tool returns, do these steps IN ORDER:',
+      '  Step 1 (REQUIRED FIRST): Run a shell command to open the browser:',
+      '    macOS: open "VERIFICATION_URL"',
+      '    Linux: xdg-open "VERIFICATION_URL"',
+      '    Windows: start "VERIFICATION_URL"',
+      '  Step 2 (ONLY after step 1): Call portal_login_check with the device_code.',
+      '',
+      'CRITICAL: You MUST open the browser BEFORE calling portal_login_check.',
+      'portal_login_check polls for 30s. If the user hasn\'t signed in, call it again.',
+      'Do NOT ask the user if they signed in — the check tool handles the wait.',
       'New users get 3 creation credits + 10 view credits on first sign-up.',
     ].join('\n'),
     z.object({}),
@@ -258,7 +264,8 @@ function registerTools(server, z, sessionState, getSessionId) {
               verification_url: deviceData.verification_url,
               user_code: deviceData.user_code,
               device_code: deviceData.device_code,
-              message: 'In your NEXT tool call batch (after this returns): (1) run shell: open "' + deviceData.verification_url + '" AND (2) call portal_login_check with the device_code. These two can be parallel. Do NOT wait for user input.',
+              message: 'Step 1: Run shell command NOW: open "' + deviceData.verification_url + '" — Step 2: AFTER the browser opens, call portal_login_check with the device_code. Do NOT call portal_login_check until the browser is open.',
+              shell_command: 'open "' + deviceData.verification_url + '"',
               next_tool: 'portal_login_check',
               auto_proceed: true,
             }, null, 2),
@@ -277,9 +284,10 @@ function registerTools(server, z, sessionState, getSessionId) {
     'portal_login_check',
     [
       'Wait for login approval after portal_login returned a device_code.',
-      'This tool polls the server automatically for up to 2 minutes.',
-      'Call it ONCE after opening the browser — it will return when the user signs in or after timeout.',
-      'No need to call repeatedly.',
+      'This tool polls for up to 30 seconds, then returns.',
+      'IMPORTANT: Only call AFTER you have opened the browser with the verification_url.',
+      'If status is "pending", call this tool again (the user is still signing in).',
+      'Repeat up to 8 times (4 min total). Do NOT ask the user — just keep calling silently.',
     ].join('\n'),
     { device_code: z.string().describe('The device_code from portal_login') },
     async ({ device_code }) => {
@@ -295,7 +303,7 @@ function registerTools(server, z, sessionState, getSessionId) {
         };
       }
 
-      const LOGIN_POLL_TIMEOUT = 120_000;
+      const LOGIN_POLL_TIMEOUT = 30_000;
       const LOGIN_POLL_INTERVAL = 3_000;
       const start = Date.now();
 
@@ -343,7 +351,8 @@ function registerTools(server, z, sessionState, getSessionId) {
           type: 'text',
           text: JSON.stringify({
             status: 'timeout',
-            message: 'Waited 2 minutes but user has not signed in yet. Call portal_login_check again if the user is still signing in, or portal_login to start over.',
+            message: 'User has not signed in yet. Call portal_login_check again immediately — do NOT ask the user. Keep calling until authenticated (up to 8 times total, 4 min).',
+            auto_proceed: true,
           }, null, 2),
         }],
       };

@@ -634,7 +634,9 @@ function registerTools(server, z, sessionState, getSessionId) {
   server.tool(
     'save_login',
     [
-      'Capture a login for a website. After this returns, in your next tool call batch:',
+      'Spin up a Portal sandbox so the user can sign into a site in the hosted UI.',
+      'Tell the user: "Sounds great, let me spin up a Portal sandbox so you can sign into [site] in the hosted UI."',
+      'After this returns, in your next tool call batch:',
       '  1. Run shell: open "HOSTED_URL" (macOS) | xdg-open (Linux) | start (Windows)',
       '  2. Call get_session with the session_id to start polling',
       'Then poll get_session every 10s in a LOOP for up to 5 min. NEVER stop to ask the user.',
@@ -652,8 +654,7 @@ function registerTools(server, z, sessionState, getSessionId) {
       const result = await apiCall('POST', '/v1/sessions/login', { url, name }, key);
       const data = JSON.parse(result.content[0].text);
       if (data.hosted_url) {
-        data.message = `In your NEXT tool call batch: (1) run shell: open "${data.hosted_url}" and (2) call get_session to start polling. Then keep polling every 10s until status is "ready". NEVER ask the user if they saved.`;
-        data.auto_proceed = true;
+        data.instructions = `In your NEXT tool call batch: (1) run shell: open "${data.hosted_url}" and (2) call get_session to start polling. Then keep polling every 10s until status is "ready". NEVER ask the user if they saved.`;
         result.content[0].text = JSON.stringify(data, null, 2);
       }
       return result;

@@ -264,10 +264,8 @@ function registerTools(server, z, sessionState, getSessionId) {
               verification_url: deviceData.verification_url,
               user_code: deviceData.user_code,
               device_code: deviceData.device_code,
-              message: 'Step 1: Run shell command NOW: open "' + deviceData.verification_url + '" — Step 2: AFTER the browser opens, call portal_login_check with the device_code. Do NOT call portal_login_check until the browser is open.',
+              instructions: 'Step 1: Run shell command to open the verification_url in the browser. Step 2: AFTER the browser opens, call portal_login_check with the device_code above.',
               shell_command: 'open "' + deviceData.verification_url + '"',
-              next_tool: 'portal_login_check',
-              auto_proceed: true,
             }, null, 2),
           }],
         };
@@ -401,7 +399,7 @@ function registerTools(server, z, sessionState, getSessionId) {
       'NODE B — Mode selection:',
       '  B1: Watch — Record self → record_demo (hosted URL, user records, stop_recording).',
       '  B2: Watch — AI script → create_script (public: HTTP fetch; auth: vm_single_page CDP grab, NO navigation).',
-      '  B3: Play — AI selectors (beta) → create_script in play mode, LLM generates blocked_selectors. Tell user this is beta.',
+      '  B3: Play — AI selectors (beta) → I\'ll find the selectors to block on the page you request, users click around.',
       '  B4: Play — User selectors → pick_selectors (hosted URL, user clicks elements, pick_selectors_complete).',
       '  B5: Not sure → offer ALL 4 options in one question.',
       '  NEVER autonomously navigate authenticated sites. Auth sites get single-page grab only.',
@@ -444,7 +442,7 @@ function registerTools(server, z, sessionState, getSessionId) {
   server.tool(
     'normalize_ptl',
     'Normalize a .ptl Portal spec into canonical form.',
-    { ptl: z.object({}).passthrough() },
+    { ptl: z.object({}).passthrough().describe('Portal spec object (see make_portal for schema)') },
     async ({ ptl }) => {
       const key = getKey();
       if (!key) return authError();
@@ -455,7 +453,7 @@ function registerTools(server, z, sessionState, getSessionId) {
   server.tool(
     'validate_ptl',
     'Validate a .ptl Portal spec without creating a portal.',
-    { ptl: z.object({}).passthrough() },
+    { ptl: z.object({}).passthrough().describe('Portal spec object (see make_portal for schema)') },
     async ({ ptl }) => {
       const key = getKey();
       if (!key) return authError();
@@ -513,12 +511,13 @@ function registerTools(server, z, sessionState, getSessionId) {
     ].join('\n'),
     {
       name: z.string().describe('Portal name (e.g. "Reddit Demo", "Acme Product Tour"). Ask the user or auto-generate from the site/content.'),
-      ptl: z.object({}).passthrough(),
+      slug: z.string().optional().describe('URL slug (e.g. "reddit-demo"). Becomes makeportals.com/demo/{slug}/... — lowercase, hyphens, no spaces. Auto-generated from name if omitted.'),
+      ptl: z.object({}).passthrough().describe('Portal spec object — must include entry.url and experience.mode at minimum'),
       saved_state_id: z.string().optional().describe('Saved login state from save_login — portal VM will load this session'),
       idempotency_key: z.string().optional(),
       dry_run: z.boolean().optional(),
     },
-    async ({ name, ptl, saved_state_id, idempotency_key, dry_run }) => {
+    async ({ name, slug, ptl, saved_state_id, idempotency_key, dry_run }) => {
       const key = getKey();
       if (!key) return authError();
       if (!name || typeof name !== 'string' || !name.trim()) {
@@ -532,6 +531,9 @@ function registerTools(server, z, sessionState, getSessionId) {
           }],
           isError: true,
         };
+      }
+      if (slug && !ptl.slug) {
+        ptl.slug = slug;
       }
       const idem = idempotency_key || crypto.randomUUID();
       return apiCall('POST', '/v1/portals', { name: name.trim(), ptl, saved_state_id, idempotency_key: idem, dry_run }, key);
@@ -589,7 +591,7 @@ function registerTools(server, z, sessionState, getSessionId) {
   server.tool(
     'configure_portal',
     [
-      'Name a portal and set usage limits on its share link.',
+      'Name a portal, set usage limits, and add a call-to-action button.',
       'Auto-refill stays enabled. The user can adjust further in the web UI.',
       'Call after make_portal to customize the link before sharing.',
       'The URL slug is set at creation time via ptl.slug (e.g. makeportals.com/demo/{slug}/{code}).',
@@ -599,11 +601,13 @@ function registerTools(server, z, sessionState, getSessionId) {
       name: z.string().optional().describe('Display name for this portal (e.g. "Stripe Demo for Sales")'),
       label: z.string().optional().describe('Label for the share link (e.g. "outbound-email-feb")'),
       max_uses: z.number().optional().describe('Max viewer uses (0 = unlimited). Auto-refill stays on.'),
+      cta_text: z.string().optional().describe('Call-to-action button text (e.g. "Book a Demo", "Start Free Trial")'),
+      cta_url: z.string().optional().describe('Call-to-action button URL (e.g. "https://calendly.com/your-link")'),
     },
-    async ({ portal_id, name, label, max_uses }) => {
+    async ({ portal_id, name, label, max_uses, cta_text, cta_url }) => {
       const key = getKey();
       if (!key) return authError();
-      return apiCall('POST', `/v1/portals/${encodeURIComponent(portal_id)}/configure`, { name, label, max_uses }, key);
+      return apiCall('POST', `/v1/portals/${encodeURIComponent(portal_id)}/configure`, { name, label, max_uses, cta_text, cta_url }, key);
     }
   );
 
@@ -785,32 +789,67 @@ function registerTools(server, z, sessionState, getSessionId) {
   server.tool(
     'get_session',
     [
-      'Poll the status of a login, recording, or selector session.',
+      'Wait for a login, recording, or selector session to reach a terminal status.',
+      'This tool polls the server for up to 30 seconds, then returns.',
+      'If status is still pending, call this tool again immediately — do NOT ask the user.',
+      'Repeat up to 10 times (5 min total). The user is working in the hosted browser.',
       '',
-      'Login session statuses:',
-      '  "awaiting_login" → user has not saved yet, keep polling',
-      '  "saving" → save in progress',
-      '  "ready" → login saved, saved_state_id is in the response',
-      '  "save_failed" → save failed, tell user to try again',
+      'Terminal statuses (stop polling):',
+      '  "ready" — login saved, saved_state_id in response',
+      '  "save_failed" — save failed',
+      '  "compiled" — recording compiled, scenes in response',
+      '  "compile_failed" — compilation failed',
+      '  "selectors_saved" — selectors picked, array in response',
       '',
-      'Recording session statuses:',
-      '  "awaiting_recording" → user has not started yet',
-      '  "recording" → user is clicking around',
-      '  "compiling" → stop was pressed, scenes being compiled',
-      '  "compiled" → done, compiled scenes are in the response as "script"',
-      '  "compile_failed" → compilation failed',
-      '',
-      'Selector session statuses:',
-      '  "awaiting_selection" → selector mode loading on VM',
-      '  "selectors_saved" → user clicked Done, selectors array is in the response',
-      '',
-      'Poll every 5 seconds. The user presses buttons in the hosted UI to trigger transitions.',
+      'Pending statuses (keep calling):',
+      '  "awaiting_login", "saving", "awaiting_recording", "recording", "compiling", "awaiting_selection"',
     ].join('\n'),
-    { session_id: z.string() },
+    { session_id: z.string().describe('Session ID from save_login, record_demo, or pick_selectors') },
     async ({ session_id }) => {
       const key = getKey();
       if (!key) return authError();
-      return apiCall('GET', `/v1/sessions/${encodeURIComponent(session_id)}`, undefined, key);
+
+      const SESSION_POLL_TIMEOUT = 30_000;
+      const SESSION_POLL_INTERVAL = 3_000;
+      const terminalStatuses = new Set([
+        'ready', 'save_failed',
+        'compiled', 'compile_failed',
+        'selectors_saved',
+      ]);
+
+      const start = Date.now();
+      let lastResult;
+
+      while (Date.now() - start < SESSION_POLL_TIMEOUT) {
+        lastResult = await apiCall('GET', `/v1/sessions/${encodeURIComponent(session_id)}`, undefined, key);
+
+        try {
+          const data = JSON.parse(lastResult.content[0].text);
+          if (terminalStatuses.has(data.status)) {
+            return lastResult;
+          }
+          if (data.code === 'expired' || data.code === 'not_found') {
+            return lastResult;
+          }
+        } catch (_) {
+          return lastResult;
+        }
+
+        if (lastResult.isError) {
+          return lastResult;
+        }
+
+        await new Promise(r => setTimeout(r, SESSION_POLL_INTERVAL));
+      }
+
+      try {
+        const data = JSON.parse(lastResult.content[0].text);
+        data.auto_proceed = true;
+        data.message = 'Still waiting — call get_session again immediately. Do NOT ask the user anything. Keep calling until a terminal status appears (up to 10 times / 5 min).';
+        lastResult.content[0].text = JSON.stringify(data, null, 2);
+      } catch (_) {}
+
+      return lastResult;
     }
   );
 
@@ -873,22 +912,28 @@ function registerTools(server, z, sessionState, getSessionId) {
       'Create a credential vault entry for automated login.',
       'Credentials are encrypted at rest and never returned via API.',
       'Use with save_login or create_script for pre-authenticated sessions.',
+      '',
+      'If the user has a saved_state_id from save_login, pass it as golden_state_id to link the credential.',
+      'Pass health_check_domain (e.g. "mail.google.com/inbox") so Portal can verify sessions are still logged in.',
+      'If the account uses 2FA/Google Authenticator, ask the user for the TOTP base32 secret.',
     ].join('\n'),
     {
-      name: z.string().describe('Label for this credential'),
+      name: z.string().describe('Label for this credential (e.g. "Acme — demo@acme.com")'),
       domain: z.string().describe('Domain (e.g. "github.com")'),
       values: z.object({
-        username: z.string().optional(),
-        email: z.string().optional(),
-        password: z.string().optional(),
+        username: z.string().optional().describe('Username or email for login'),
+        email: z.string().optional().describe('Email for login (if different from username)'),
+        password: z.string().optional().describe('Password for login'),
       }).passthrough().describe('Login field values'),
-      totp_secret: z.string().optional().describe('TOTP secret for 2FA'),
-      sso_provider: z.string().optional().describe('SSO provider (google, github, microsoft)'),
+      totp_secret: z.string().optional().describe('TOTP base32 secret for 2FA (e.g. "JBSWY3DPEHPK3PXP")'),
+      golden_state_id: z.string().optional().describe('saved_state_id from save_login — links credential to this saved session for auto re-login'),
+      health_check_domain: z.string().optional().describe('URL to verify login is alive (e.g. "mail.google.com/inbox"). Portal re-logs-in if VMs drift from this URL.'),
+      sso_provider: z.string().optional().describe('SSO provider if applicable (google, github, microsoft)'),
     },
-    async ({ name, domain, values, totp_secret, sso_provider }) => {
+    async ({ name, domain, values, totp_secret, golden_state_id, health_check_domain, sso_provider }) => {
       const key = getKey();
       if (!key) return authError();
-      return apiCall('POST', '/v1/credentials', { name, domain, values, totp_secret, sso_provider }, key);
+      return apiCall('POST', '/v1/credentials', { name, domain, values, totp_secret, golden_state_id, health_check_domain, sso_provider }, key);
     }
   );
 
@@ -904,9 +949,26 @@ function registerTools(server, z, sessionState, getSessionId) {
   );
 
   server.tool(
+    'generate_totp',
+    [
+      'Generate a TOTP 6-digit code from a stored credential vault entry.',
+      'The credential must have a totp_secret. Returns the current code and seconds remaining.',
+      'Use this when re-authenticating a session that requires 2FA.',
+    ].join('\n'),
+    {
+      credential_id: z.string().describe('Credential vault entry ID'),
+    },
+    async ({ credential_id }) => {
+      const key = getKey();
+      if (!key) return authError();
+      return apiCall('POST', `/v1/credentials/${encodeURIComponent(credential_id)}/totp`, {}, key);
+    }
+  );
+
+  server.tool(
     'delete_credential',
     'Delete a credential vault entry.',
-    { credential_id: z.string() },
+    { credential_id: z.string().describe('Credential vault entry ID') },
     async ({ credential_id }) => {
       const key = getKey();
       if (!key) return authError();

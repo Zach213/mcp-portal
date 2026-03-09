@@ -1028,7 +1028,7 @@ function registerTools(server, z, sessionState, getSessionId) {
       rate_limit_max: z.number().optional().describe('Override: max API calls per window (default 5)'),
       rate_limit_window_ms: z.number().optional().describe('Override: window duration in ms (default 60000 = 1 min)'),
     },
-    async ({ example, name, rate_limit_max, rate_limit_window_ms }, { log }) => {
+    async ({ example, name, rate_limit_max, rate_limit_window_ms }) => {
       const key = getKey();
       if (!key) return authError();
 
@@ -1067,7 +1067,6 @@ function registerTools(server, z, sessionState, getSessionId) {
         },
       };
 
-      log.info(`Deploying example: ${example} (rate limit: ${max}/${windowMs}ms)`);
       return apiCall('POST', '/v1/portals', { name: portalName, ptl }, key);
     }
   );

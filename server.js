@@ -491,12 +491,20 @@ function registerTools(server, z, sessionState, getSessionId) {
       '  ptl.experience.agent.goal — what the AI should focus on (system prompt)',
       '  ptl.experience.agent.script — ordered list of what AI says, e.g. ["First...", "Now..."]',
       '    Advanced: use "scenes" instead for actions: [{script, actions: [{action, selector?, inner_text?, ms?}]}]',
-      '    Actions: click (selector + inner_text for fallback), scroll_up, scroll_down, wait (ms), type (selector + inner_text)',
+      '    Actions: click (selector + inner_text for fallback), scroll_up, scroll_down, scroll_to_element (selector), wait (ms), type (selector + inner_text)',
       '    IMPORTANT: When copying scenes from create_script, pass ALL fields including inner_text — it is the click fallback when CSS selector fails.',
+      '',
+      '  ptl.entry.framework — for local_file: deployment preset. Values: vite, cra, html, serve, next, react-express, vite-express',
+      '    react-express → /client (npm start :3000) + /server (node server.js :3001)',
+      '    vite-express  → /client (npm run dev :5173) + /server (node server.js :3001)',
       '',
       '  ptl.guardrails.allowed_urls — URLs the user can visit in play mode (array of strings)',
       '  ptl.guardrails.blocked_selectors — CSS selectors to disable (e.g. "#delete-account", ".danger-zone"). ONLY use selectors from a real DOM snapshot — never guess.',
       '  ptl.guardrails.apis — API blocking: { blocked: ["DELETE /api/account"], block_uploads: true }',
+      '  ptl.guardrails.api_rules.rate_limits — rate limit specific API calls (array of objects):',
+      '    [{ name: "Chat API", pattern: "/api/chat", method: "POST", max: 5, windowMs: 60000 }]',
+      '    pattern: substring match on URL. method: ANY/GET/POST/PUT/PATCH/DELETE. max: calls per window. windowMs: window in ms.',
+      '    Enforced at browser level via CDP — returns 429 when exceeded. No backend changes needed.',
       '',
       'Minimal example: { entry: { url: "https://example.com" }, experience: { mode: "play" } }',
       '',
@@ -508,6 +516,8 @@ function registerTools(server, z, sessionState, getSessionId) {
       'pass as ptl.entry.chrome_extension. Also set entry.url to the site to test on.',
       '',
       'For authenticated sites: pass saved_state_id from save_login so the portal VM loads the logged-in session.',
+      '',
+      'TIP: To quickly demo rate limiting without building an app, use deploy_example with example="rate-limit-demo".',
     ].join('\n'),
     {
       name: z.string().describe('Portal name (e.g. "Reddit Demo", "Acme Product Tour"). Ask the user or auto-generate from the site/content.'),
@@ -991,6 +1001,74 @@ function registerTools(server, z, sessionState, getSessionId) {
       const key = getKey();
       if (!key) return authError();
       return apiCall('POST', '/v1/auth/credits/checkout', { pack_id }, key);
+    }
+  );
+
+  // ── Hardcoded example app: rate-limit demo ──────────────────────────────
+  // Vite+React frontend (chat UI) + Express backend (mock LLM). ~6KB zipped.
+  const EXAMPLE_RATE_LIMIT_DEMO_B64 = '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';
+
+  server.tool(
+    'deploy_example',
+    [
+      'Deploy a built-in example app to demonstrate a Portal feature.',
+      '',
+      'Available examples:',
+      '  "rate-limit-demo" — React + Express chat app with a mock LLM backend.',
+      '    Demonstrates Portal\'s API rate limiting: each chat message calls POST /api/chat.',
+      '    Default: 5 calls/minute. After the limit, Portal\'s VM enforcer returns a synthetic 429.',
+      '    No real API key needed — backend returns mock responses.',
+      '',
+      'The example is deployed as a Portal with a shareable link. Costs 1 credit.',
+      'After deploying, open the URL and say "Try sending 6+ messages quickly to see the rate limit kick in."',
+    ].join('\n'),
+    {
+      example: z.string().describe('Example name (e.g. "rate-limit-demo")'),
+      name: z.string().optional().describe('Portal name (auto-generated if omitted)'),
+      rate_limit_max: z.number().optional().describe('Override: max API calls per window (default 5)'),
+      rate_limit_window_ms: z.number().optional().describe('Override: window duration in ms (default 60000 = 1 min)'),
+    },
+    async ({ example, name, rate_limit_max, rate_limit_window_ms }, { log }) => {
+      const key = getKey();
+      if (!key) return authError();
+
+      if (example !== 'rate-limit-demo') {
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ error: `Unknown example "${example}". Available: rate-limit-demo` }, null, 2) }],
+          isError: true,
+        };
+      }
+
+      const max = rate_limit_max || 5;
+      const windowMs = rate_limit_window_ms || 60000;
+      const portalName = name || 'Rate Limit Demo';
+
+      const ptl = {
+        version: 1,
+        slug: 'rate-limit-demo',
+        entry: { type: 'local_file', framework: 'vite-express', local_file: EXAMPLE_RATE_LIMIT_DEMO_B64 },
+        experience: {
+          mode: 'play',
+          agent: {
+            enabled: true,
+            interface: ['text'],
+            greeting: `Welcome! This is a chat app with a ${max}-call-per-${Math.round(windowMs/1000)}s rate limit. Try sending ${max + 1}+ messages quickly to see Portal block the API call with a 429.`,
+            knowledge: 'This app demonstrates Portal\'s API rate limiting. The frontend sends POST /api/chat on every message. The backend is a mock LLM that returns canned responses — no real API key. Portal\'s VM enforcer intercepts requests at the Chrome DevTools Protocol level and returns a synthetic 429 when the rate limit is exceeded.',
+            goal: 'Let the user try the chat app and discover the rate limit naturally. Explain how Portal enforces it at the browser level with zero backend changes.',
+          },
+        },
+        guardrails: {
+          api_rules: {
+            enabled: true,
+            rate_limits: [
+              { name: 'Chat API limit', pattern: '/api/chat', method: 'POST', max, windowMs },
+            ],
+          },
+        },
+      };
+
+      log.info(`Deploying example: ${example} (rate limit: ${max}/${windowMs}ms)`);
+      return apiCall('POST', '/v1/portals', { name: portalName, ptl }, key);
     }
   );
 

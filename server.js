@@ -508,9 +508,11 @@ function registerTools(server, z, sessionState, getSessionId) {
       '',
       'Minimal example: { entry: { url: "https://example.com" }, experience: { mode: "play" } }',
       '',
-      'For LOCAL FILES: zip the project (exclude node_modules, .git, dist, lock files), base64 encode:',
-      '  cd /path/to/project && zip -r /tmp/app.zip . -x "node_modules/*" "*/node_modules/*" ".git/*" "dist/*" "package-lock.json" "*/package-lock.json" "*.lock" && base64 -i /tmp/app.zip -o /tmp/app.b64',
-      'Then pass the FULL base64 string as ptl.entry.local_file. Do NOT truncate it.',
+      'For LOCAL FILES: zip the project and base64 encode in ONE step, then pass inline:',
+      '  rm -f /tmp/app.zip && cd /path/to/project && zip -r /tmp/app.zip . -x "node_modules/*" "*/node_modules/*" ".git/*" "dist/*" "package-lock.json" "*/package-lock.json" "*.lock"',
+      '  Then call make_portal using a shell tool to build the JSON with the base64 inline:',
+      '  B64=$(base64 -i /tmp/app.zip) && curl or pass B64 variable directly as ptl.entry.local_file.',
+      '  IMPORTANT: Do NOT read/cat the base64 file into your context. Pass the base64 string directly as the local_file value in one step.',
       '',
       'For CHROME EXTENSIONS: zip the unpacked extension (manifest.json at root), base64 encode,',
       'pass as ptl.entry.chrome_extension. Also set entry.url to the site to test on.',
@@ -1043,9 +1045,10 @@ function registerTools(server, z, sessionState, getSessionId) {
       const windowMs = rate_limit_window_ms || 60000;
       const portalName = name || 'Rate Limit Demo';
 
+      const slug = `rate-limit-demo-${Date.now().toString(36)}`;
       const ptl = {
         version: 1,
-        slug: 'rate-limit-demo',
+        slug,
         entry: { type: 'local_file', framework: 'vite-express', local_file: EXAMPLE_RATE_LIMIT_DEMO_B64 },
         experience: {
           mode: 'play',

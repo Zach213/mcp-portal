@@ -535,7 +535,7 @@ function registerTools(server, z, sessionState, getSessionId) {
       '  ptl.experience.agent.enabled — whether AI is present (default true)',
       '  ptl.experience.agent.greeting — what AI says when session opens',
       '  ptl.experience.agent.knowledge — docs/FAQ text the AI references',
-      '  ptl.experience.agent.goal — what the AI should focus on (system prompt)',
+      '  ptl.experience.agent.goal — REQUIRED for watch mode. What the agent should demonstrate (system prompt). Also recommended for play mode.',
       '  ptl.experience.agent.script — ordered list of what AI says, e.g. ["First...", "Now..."]',
       '    Advanced: use "scenes" instead for actions: [{script, actions: [{action, selector?, inner_text?, ms?}]}]',
       '    Actions: click (selector + inner_text for fallback), scroll_up, scroll_down, scroll_to_element (selector), wait (ms), type (selector + inner_text)',

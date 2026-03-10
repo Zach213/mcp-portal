@@ -391,9 +391,9 @@ function registerTools(server, z, sessionState, getSessionId) {
       '       User approves via tool dialog — don\'t ask separately. Auto-open hosted_url.',
       '       Poll get_session until saved_state_id returned. → proceed to B.',
       '  A2: Public (landing pages, docs, marketing) → proceed to B (no saved_state_id).',
-      '  A3: Local file / localhost → zip directory (exclude node_modules/.git/dist),',
-      '       base64 encode, pass as ptl.entry.local_file in make_portal.',
-      '       For Chrome extensions: pass as ptl.entry.chrome_extension + entry.url for test site.',
+      '  A3: Local file / localhost → zip directory, then call upload_source to upload it.',
+      '       Use the returned source_id in make_portal as ptl.entry.source_id.',
+      '       For Chrome extensions: same flow with type="chrome_extension" + set entry.url for test site.',
       '  A4: Not sure → ASK: "Does [site] need you to be logged in?" Err on asking.',
       '',
       'NODE B — Mode selection:',
@@ -462,6 +462,53 @@ function registerTools(server, z, sessionState, getSessionId) {
   );
 
   server.tool(
+    'upload_source',
+    [
+      'Upload a local zip file (project or Chrome extension) for deployment. Returns a source_id to use in make_portal.',
+      '',
+      'ALWAYS use this instead of passing base64 inline. It is faster, cheaper, and avoids token waste.',
+      '',
+      'How it works:',
+      '1. Call this tool — it returns a shell command.',
+      '2. Run that shell command in your terminal. It uploads the zip directly from disk (bytes never enter your context).',
+      '3. The command prints a JSON response with a source_id.',
+      '4. Pass that source_id as ptl.entry.source_id in make_portal.',
+      '',
+      'The source_id expires after 30 minutes.',
+    ].join('\n'),
+    {
+      file_path: z.string().describe('Absolute path to the zip file on the user\'s machine (e.g. "/tmp/my-app.zip")'),
+      type: z.enum(['local_file', 'chrome_extension']).describe('What the zip contains'),
+    },
+    async ({ file_path, type }) => {
+      const key = getKey();
+      if (!key) return authError();
+
+      const curlCmd = [
+        `curl -s -X POST "${PORTAL_API}/v1/files/upload"`,
+        `-H "Authorization: Bearer ${key}"`,
+        `-F "file=@${file_path}"`,
+        `-F "type=${type}"`,
+      ].join(' \\\n  ');
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            action: 'run_shell_command',
+            command: curlCmd,
+            instructions: [
+              'Run this command in your shell. It uploads the zip directly from disk — do NOT base64 encode or read the file.',
+              'The response will contain a source_id. Use it in make_portal as ptl.entry.source_id.',
+              `Also set ptl.entry.type to "${type}"${type === 'local_file' ? ' and ptl.entry.framework to the appropriate preset.' : ' and ptl.entry.url to the site to test on.'}`,
+            ].join(' '),
+          }, null, 2),
+        }],
+      };
+    }
+  );
+
+  server.tool(
     'make_portal',
     [
       'STOP: You MUST show the user a draft summary (greeting, selectors, mode, URL) and ask for a name BEFORE calling this tool.',
@@ -511,18 +558,16 @@ function registerTools(server, z, sessionState, getSessionId) {
       '',
       'Minimal example: { entry: { url: "https://example.com" }, experience: { mode: "play" } }',
       '',
-      'For LOCAL FILES: zip the project and base64 encode in ONE step, then pass inline:',
-      '  rm -f /tmp/app.zip && cd /path/to/project && zip -r /tmp/app.zip . -x "node_modules/*" "*/node_modules/*" ".git/*" "dist/*" "package-lock.json" "*/package-lock.json" "*.lock"',
-      '  Then call make_portal using a shell tool to build the JSON with the base64 inline:',
-      '  B64=$(base64 -i /tmp/app.zip) && curl or pass B64 variable directly as ptl.entry.local_file.',
-      '  IMPORTANT: Do NOT read/cat the base64 file into your context. Pass the base64 string directly as the local_file value in one step.',
+      'For LOCAL FILES or CHROME EXTENSIONS — use the upload_source tool (MANDATORY):',
+      '  1. Zip the project: cd /path/to/project && zip -r /tmp/app.zip . -x "node_modules/*" "*/node_modules/*" ".git/*" "dist/*" "*.lock" "package-lock.json" "*/package-lock.json"',
+      '  2. Call upload_source with the zip path and type ("local_file" or "chrome_extension").',
+      '  3. Run the shell command it returns — this uploads the zip directly from disk (fast, no token waste).',
+      '  4. Use the returned source_id as ptl.entry.source_id in make_portal.',
       '',
-      'For CHROME EXTENSIONS: zip the unpacked extension directory (manifest.json MUST be at the zip root, NOT nested in a subfolder).',
-      '  cd /path/to/extension && zip -r /tmp/ext.zip . -x ".git/*"',
-      '  B64=$(base64 -i /tmp/ext.zip)',
-      '  Pass B64 as ptl.entry.chrome_extension (or entry.type="chrome_extension" + entry.source=B64).',
-      '  ALSO set entry.url to the site the extension should run on (e.g. "https://nytimes.com").',
-      '  Use guardrails.allowed_urls to restrict which sites users can navigate to in the Portal.',
+      '  NEVER base64-encode files and pass them inline. ALWAYS use upload_source.',
+      '',
+      '  For Chrome extensions: manifest.json MUST be at the zip root. Also set entry.url to the test site.',
+      '  Use guardrails.allowed_urls to restrict navigation.',
       '',
       'For authenticated sites: pass saved_state_id from save_login so the portal VM loads the logged-in session.',
       '',

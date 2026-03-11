@@ -374,16 +374,23 @@ function registerPortalTools(server, z) {
       '',
       'AFTER AUTH, follow this flow:',
       '',
+      'CRITICAL RULE: NEVER ask for credentials, passwords, demo account details, or login info in the chat.',
+      'NEVER ask "what are the credentials?" or "do you have a demo account?".',
+      'If a site needs login, just ask for the URL and call save_login — the user signs in visually in the hosted browser.',
+      'The ONLY question you should ever ask is the URL if the user hasn\'t provided it.',
+      '',
       'NODE A — Entry type classification:',
-      '  A1: Needs auth (dashboards, admin, SaaS, settings) → call save_login.',
-      '       User approves via tool dialog — don\'t ask separately. Auto-open hosted_url.',
-      '       Poll get_session until saved_state_id returned. → proceed to B.',
+      '  A1: Needs auth (dashboards, admin, SaaS, settings, "signed in", "demo account") →',
+      '       Ask ONLY for the URL if not provided. Then call save_login IMMEDIATELY.',
+      '       Do NOT ask for credentials, usernames, passwords, or any login details.',
+      '       The user logs in themselves in the hosted sandbox browser that save_login opens.',
+      '       Auto-open hosted_url. Poll get_session until saved_state_id returned. → proceed to B.',
       '  A2: Public (landing pages, docs, marketing) → proceed to B (no saved_state_id).',
       '  A3: Local file / localhost → zip directory (exclude node_modules/.git/dist),',
       '       base64 encode, pass as ptl.entry.source in make_portal.',
       '       Set entry.type="local_file", entry.framework="vite"|"cra"|"html".',
       '       For Chrome extensions: entry.type="chrome_extension" + entry.url for test site.',
-      '  A4: Not sure → ASK: "Does [site] need you to be logged in?" Err on asking.',
+      '  A4: Not sure → ASK ONLY: "What\'s the URL?" — nothing else. Do NOT ask for credentials.',
       '',
       'NODE B — Mode selection (6 sub-nodes):',
       '  B1: Watch — Record self → record_demo (hosted URL, user records, stop_recording).',
@@ -408,6 +415,11 @@ function registerPortalTools(server, z) {
       '  D2: configure_embed → set allowed_origin → returns <iframe> snippet.',
       '  D3: get_portal_sessions → conversation logs + signed recording URLs.',
       '  D4: Not happy → back to Node B.',
+      '',
+      'SECURITY: NEVER ask for credentials, passwords, usernames, emails, demo account info, or any login details in the chat.',
+      'NEVER say "I need credentials" or "What are the login details?" or "Do you have a demo account?".',
+      'For auth sites, call save_login with JUST the URL — the user logs in themselves in the hosted sandbox browser.',
+      'The only acceptable question is "What\'s the URL?" if the user hasn\'t specified it.',
       '',
       'Other tools: list_portals, create_credential, buy_credits.',
       'New users get 3 creation credits + 10 view credits on sign-up.',
@@ -594,10 +606,13 @@ function registerPortalTools(server, z) {
   server.tool(
     'save_login',
     [
-      'Capture a login for a website. IMMEDIATELY run a shell command to open the hosted_url — do NOT just print it.',
+      'Spin up a sandbox browser so the user can sign into a site.',
+      'This is the ONLY way to handle authentication — NEVER ask for credentials in chat.',
+      'You only need the URL. Call this tool, then IMMEDIATELY open the hosted_url in the user\'s browser.',
       'Use: open "URL" (macOS) | xdg-open "URL" (Linux) | start "URL" (Windows).',
-      'User logs in normally in the hosted browser and presses Save. Poll get_session every 10s.',
-      'When status is "ready", the login state is saved. Do NOT wait for the user to tell you verbally.',
+      'The user logs in themselves in the hosted browser and clicks Save when done.',
+      'Poll get_session every 10s. When status is "ready", the login state is saved.',
+      'Do NOT wait for the user to tell you — just poll silently.',
     ].join('\n'),
     {
       url: z.string().describe('The URL to navigate to for login'),
@@ -819,6 +834,10 @@ function registerPortalTools(server, z) {
       'Create a credential vault entry for automated login.',
       'Credentials are encrypted at rest and never returned via API.',
       'Use with save_login or create_script for pre-authenticated sessions.',
+      '',
+      'IMPORTANT: ONLY use this tool when the user proactively offers credentials, or after save_login completes.',
+      'NEVER solicit or ask for credentials (username, email, password) in the chat.',
+      'The normal auth flow is save_login (user logs in visually) — only use create_credential if the user volunteers credentials for auto re-login.',
     ].join('\n'),
     {
       name: z.string().describe('Label for this credential'),
@@ -942,7 +961,11 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  process.stderr.write(`[Portal] Fatal: ${err.message}\n`);
-  process.exit(1);
-});
+module.exports = { registerPortalTools, apiCall, getApiKey, readCredentials, writeCredentials, deleteCredentials, authError };
+
+if (require.main === module) {
+  main().catch((err) => {
+    process.stderr.write(`[Portal] Fatal: ${err.message}\n`);
+    process.exit(1);
+  });
+}

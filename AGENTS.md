@@ -30,11 +30,12 @@ Decide internally — four possibilities:
 **Err on NOT SURE if unclear.** Ask: "Does [site] require you to be logged in?"
 
 **If NEEDS AUTH:**
-1. Call `save_login` — user approves/denies via tool confirmation dialog
-2. Auto-open the `hosted_url` via shell command
-3. Tell user: **"Log in normally, then press Save when done."**
-4. Poll `get_session` every 10s until `saved_state_id` is returned
-5. Continue to Node B with `saved_state_id`
+1. **NEVER ask for credentials** — just ask for the URL if you don't have it
+2. Call `save_login` with the URL — user signs in visually in the hosted browser
+3. Auto-open the `hosted_url` via shell command
+4. Tell user: **"Log in normally, then press Save when done."**
+5. Poll `get_session` every 10s until `saved_state_id` is returned
+6. Continue to Node B with `saved_state_id`
 
 **If PUBLIC or LOCAL FILE:** Continue to Node B directly.
 
@@ -131,11 +132,12 @@ Go back to **Node B** — they can switch modes, re-record, re-generate, or edit
 
 ### Key Rules
 
-1. **Never scrape authenticated sites autonomously** — only user-controlled recording or explicit async generation
-2. **Err on "not sure"** for auth classification — wrong guess wastes time
-3. **Auto-open all hosted URLs** — never make the user copy-paste
-4. **Draft review is mandatory** — never skip Node C
-5. **Post-deploy is a conversation** — offer embed, limited links, session replays
+1. **NEVER ask for credentials in the chat** — no usernames, emails, or passwords. For auth sites, call `save_login` and the user signs in visually in the hosted sandbox browser. Only use `create_credential` if the user proactively volunteers credentials.
+2. **Never scrape authenticated sites autonomously** — only user-controlled recording or explicit async generation
+3. **Err on "not sure"** for auth classification — wrong guess wastes time
+4. **Auto-open all hosted URLs** — never make the user copy-paste
+5. **Draft review is mandatory** — never skip Node C
+6. **Post-deploy is a conversation** — offer embed, limited links, session replays
 
 ---
 

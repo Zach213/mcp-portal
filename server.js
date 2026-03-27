@@ -1103,7 +1103,7 @@ function registerTools(server, z, sessionState, getSessionId) {
     async () => {
       const key = getKey();
       if (!key) return authError();
-      return apiCall('GET', '/v1/auth/subscription', {}, key);
+      return apiCall('GET', '/v1/auth/subscription', undefined, key);
     }
   );
 

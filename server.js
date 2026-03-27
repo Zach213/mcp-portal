@@ -226,7 +226,7 @@ function registerTools(server, z, sessionState, getSessionId) {
       'CRITICAL: You MUST open the browser BEFORE calling portal_login_check.',
       'portal_login_check polls for 30s. If the user hasn\'t signed in, call it again.',
       'Do NOT ask the user if they signed in — the check tool handles the wait.',
-      'New users get 3 creation credits + 10 view credits on first sign-up.',
+      'New users get 2 creation credits + 10 view credits on first sign-up.',
     ].join('\n'),
     {},
     async () => {
@@ -430,8 +430,8 @@ function registerTools(server, z, sessionState, getSessionId) {
       'For auth sites, call save_login with JUST the URL — the user logs in themselves in the hosted sandbox browser.',
       'The only acceptable question is "What\'s the URL?" if the user hasn\'t specified it.',
       '',
-      'Other tools: list_portals, create_credential, buy_credits.',
-      'New users get 3 creation credits + 10 view credits on sign-up.',
+      'Other tools: list_portals, create_credential, buy_credits, subscribe, subscription_status, cancel_subscription.',
+      'New users get 2 creation credits + 10 view credits on sign-up.',
     ].join('\n'),
     {},
     async () => {
@@ -1069,6 +1069,57 @@ function registerTools(server, z, sessionState, getSessionId) {
       const key = getKey();
       if (!key) return authError();
       return apiCall('POST', '/v1/auth/credits/checkout', { pack_id }, key);
+    }
+  );
+
+  server.tool(
+    'subscribe',
+    [
+      'Subscribe to the Builder plan ($20/month). Opens a Stripe checkout page.',
+      '',
+      'Builder plan includes: 5 active Portals, 50 demo sessions/month, 10 min sessions,',
+      '5 concurrent viewers, analytics, and additional sessions at $0.80 each.',
+      '',
+      'Returns checkout_url — open it in the user\'s browser. Subscription activates automatically after payment.',
+      'If the user is already subscribed, returns an error.',
+    ].join('\n'),
+    {},
+    async () => {
+      const key = getKey();
+      if (!key) return authError();
+      return apiCall('POST', '/v1/auth/subscription/create', {}, key);
+    }
+  );
+
+  server.tool(
+    'subscription_status',
+    [
+      'Check the current subscription status (tier, billing period, trial end).',
+      '',
+      'Returns: tier (free/builder), subscription status, period end date, and trial end date.',
+      'Use this to check if the user is subscribed before suggesting subscribe or buy_credits.',
+    ].join('\n'),
+    {},
+    async () => {
+      const key = getKey();
+      if (!key) return authError();
+      return apiCall('GET', '/v1/auth/subscription', {}, key);
+    }
+  );
+
+  server.tool(
+    'cancel_subscription',
+    [
+      'Cancel the Builder subscription. Access continues until end of billing period.',
+      '',
+      'Cancellation is immediate but access remains active until the period ends.',
+      'Returns the date when access will expire.',
+    ].join('\n'),
+    {},
+    async () => {
+      const key = getKey();
+      if (!key) return authError();
+      return apiCall('POST', '/v1/auth/subscription/cancel', {}, key);
     }
   );
 
